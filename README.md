@@ -102,6 +102,23 @@ Pick a fallback format if the exact request is not supported:
 let picked = chimeras::best_format(&capabilities, &config).expect("no fallback");
 ```
 
+## Testing RTSP Locally
+
+The `demo/` app can view RTSP streams on macOS and Windows. To exercise the full path without a real IP camera, serve a local MP4 as an RTSP stream using [`mediamtx`](https://github.com/bluenviron/mediamtx) and `ffmpeg` (both on `PATH`):
+
+```bash
+# terminal 1: start mediamtx with the repo's mediamtx.yml
+just rtsp-server
+
+# terminal 2: publish an MP4 file as an RTSP stream on rtsp://127.0.0.1:8554/live
+just serve-rtsp-stream path/to/some.mp4
+
+# terminal 3: launch the demo app
+just run
+```
+
+In the demo window, switch the source toggle to **RTSP**, paste `rtsp://127.0.0.1:8554/live` into the URL field, and press **Connect**. On macOS and Windows, H.264/H.265 streams are hardware-decoded (VideoToolbox / Media Foundation); MJPEG streams are delivered verbatim and decoded via `zune-jpeg` on demand.
+
 ## Examples
 
 See the [examples](examples/) directory:
