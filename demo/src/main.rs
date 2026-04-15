@@ -10,6 +10,12 @@ use std::time::Duration;
 const APP_CSS: &str = include_str!("../assets/app.css");
 const PROTOCOL: &str = "chimeras";
 
+#[cfg(any(target_os = "windows", target_os = "android"))]
+const PREVIEW_URL_BASE: &str = "http://chimeras.localhost";
+
+#[cfg(not(any(target_os = "windows", target_os = "android")))]
+const PREVIEW_URL_BASE: &str = "chimeras://localhost";
+
 fn main() {
     let latest_frame = LatestFrame::new();
     let latest_for_protocol = latest_frame.clone();
@@ -367,7 +373,7 @@ fn App() -> Element {
                 if is_connected {
                     img {
                         class: "preview-image",
-                        src: "http://{PROTOCOL}.localhost/frame.bmp?t={preview_tick()}",
+                        src: "{PREVIEW_URL_BASE}/frame.bmp?t={preview_tick()}",
                     }
                 } else {
                     div { class: "preview-placeholder",
