@@ -4,17 +4,27 @@ use dioxus::prelude::*;
 use image::ImageEncoder;
 use image::codecs::png::PngEncoder;
 use std::borrow::Cow;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const APP_CSS: &str = include_str!("../assets/app.css");
+const PREVIEW_JS: &str = include_str!("../assets/preview.js");
 const PROTOCOL: &str = "chimeras";
 
+const PREVIEW_MAGIC: [u8; 4] = *b"CHIM";
+const PREVIEW_VERSION: u8 = 1;
+const PREVIEW_FORMAT_NONE: u8 = 0;
+const PREVIEW_FORMAT_NV12: u8 = 1;
+const PREVIEW_FORMAT_BGRA: u8 = 2;
+const PREVIEW_FORMAT_RGBA: u8 = 3;
+const PREVIEW_HEADER_LEN: usize = 24;
+
 #[cfg(any(target_os = "windows", target_os = "android"))]
-const PREVIEW_URL_BASE: &str = "http://chimeras.localhost";
+const PREVIEW_FETCH_URL: &str = "http://chimeras.localhost/preview.bin";
 
 #[cfg(not(any(target_os = "windows", target_os = "android")))]
-const PREVIEW_URL_BASE: &str = "chimeras://localhost";
+const PREVIEW_FETCH_URL: &str = "chimeras://localhost/preview.bin";
 
 fn main() {
     let latest_frame = LatestFrame::new();
@@ -56,18 +66,21 @@ impl Drop for Session {
 #[derive(Clone)]
 struct LatestFrame {
     frame: Arc<Mutex<Option<Frame>>>,
+    counter: Arc<AtomicU32>,
 }
 
 impl LatestFrame {
     fn new() -> Self {
         Self {
             frame: Arc::new(Mutex::new(None)),
+            counter: Arc::new(AtomicU32::new(0)),
         }
     }
 
     fn set(&self, frame: Frame) {
         if let Ok(mut slot) = self.frame.lock() {
             *slot = Some(frame);
+            self.counter.fetch_add(1, Ordering::Release);
         }
     }
 
@@ -78,147 +91,89 @@ impl LatestFrame {
     fn snapshot(&self) -> Option<Frame> {
         self.frame.lock().ok()?.clone()
     }
+
+    fn counter(&self) -> u32 {
+        self.counter.load(Ordering::Acquire)
+    }
 }
 
 fn serve_frame(latest: &LatestFrame) -> HttpResponse<Cow<'static, [u8]>> {
-    let bmp = latest
-        .snapshot()
-        .map(|frame| frame_to_bmp(&frame))
-        .unwrap_or_else(placeholder_bmp);
+    let counter = latest.counter();
+    let body = match latest.snapshot() {
+        Some(frame) => encode_preview(&frame, counter),
+        None => preview_header(PREVIEW_FORMAT_NONE, 0, 0, 0, counter),
+    };
+    let len = body.len();
     HttpResponse::builder()
         .status(200)
-        .header("Content-Type", "image/bmp")
+        .header("Content-Type", "application/octet-stream")
+        .header("Content-Length", len.to_string())
         .header("Cache-Control", "no-store")
-        .body(Cow::Owned(bmp))
+        .header("Access-Control-Allow-Origin", "*")
+        .body(Cow::Owned(body))
         .unwrap()
 }
 
-fn placeholder_bmp() -> Vec<u8> {
-    let pixel = [0u8, 0, 0, 0];
-    let mut buffer = Vec::with_capacity(58);
-    buffer.extend_from_slice(b"BM");
-    buffer.extend_from_slice(&58u32.to_le_bytes());
-    buffer.extend_from_slice(&0u32.to_le_bytes());
-    buffer.extend_from_slice(&54u32.to_le_bytes());
-    buffer.extend_from_slice(&40u32.to_le_bytes());
-    buffer.extend_from_slice(&1i32.to_le_bytes());
-    buffer.extend_from_slice(&(-1i32).to_le_bytes());
-    buffer.extend_from_slice(&1u16.to_le_bytes());
-    buffer.extend_from_slice(&24u16.to_le_bytes());
-    buffer.extend_from_slice(&0u32.to_le_bytes());
-    buffer.extend_from_slice(&4u32.to_le_bytes());
-    buffer.extend_from_slice(&2835i32.to_le_bytes());
-    buffer.extend_from_slice(&2835i32.to_le_bytes());
-    buffer.extend_from_slice(&0u32.to_le_bytes());
-    buffer.extend_from_slice(&0u32.to_le_bytes());
-    buffer.extend_from_slice(&pixel);
-    buffer
+fn preview_header(format: u8, width: u32, height: u32, stride: u32, counter: u32) -> Vec<u8> {
+    let mut header = Vec::with_capacity(PREVIEW_HEADER_LEN);
+    header.extend_from_slice(&PREVIEW_MAGIC);
+    header.push(PREVIEW_VERSION);
+    header.push(format);
+    header.extend_from_slice(&[0u8, 0u8]);
+    header.extend_from_slice(&width.to_le_bytes());
+    header.extend_from_slice(&height.to_le_bytes());
+    header.extend_from_slice(&stride.to_le_bytes());
+    header.extend_from_slice(&counter.to_le_bytes());
+    header
 }
 
-fn frame_to_bmp(frame: &Frame) -> Vec<u8> {
+fn encode_preview(frame: &Frame, counter: u32) -> Vec<u8> {
     match frame.pixel_format {
-        PixelFormat::Bgra8 => bmp_from_bgra(frame),
-        _ => {
-            let Ok(rgb) = chimeras::to_rgb8(frame) else {
-                return placeholder_bmp();
+        PixelFormat::Nv12 => {
+            let mut out = preview_header(
+                PREVIEW_FORMAT_NV12,
+                frame.width,
+                frame.height,
+                frame.stride,
+                counter,
+            );
+            out.reserve(frame.plane_primary.len() + frame.plane_secondary.len());
+            out.extend_from_slice(&frame.plane_primary);
+            out.extend_from_slice(&frame.plane_secondary);
+            out
+        }
+        PixelFormat::Bgra8 => {
+            let stride = if frame.stride == 0 {
+                frame.width * 4
+            } else {
+                frame.stride
             };
-            bmp_from_rgb(&rgb, frame.width, frame.height)
+            let mut out = preview_header(
+                PREVIEW_FORMAT_BGRA,
+                frame.width,
+                frame.height,
+                stride,
+                counter,
+            );
+            out.extend_from_slice(&frame.plane_primary);
+            out
+        }
+        _ => {
+            let Ok(rgba) = chimeras::to_rgba8(frame) else {
+                return preview_header(PREVIEW_FORMAT_NONE, 0, 0, 0, counter);
+            };
+            let stride = frame.width * 4;
+            let mut out = preview_header(
+                PREVIEW_FORMAT_RGBA,
+                frame.width,
+                frame.height,
+                stride,
+                counter,
+            );
+            out.extend_from_slice(&rgba);
+            out
         }
     }
-}
-
-fn bmp_from_rgb(rgb: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let width_usize = width as usize;
-    let height_usize = height as usize;
-    let row_bytes = width_usize * 3;
-    let row_padded = (row_bytes + 3) & !3;
-    let pad = row_padded - row_bytes;
-    let pixel_data_size = row_padded * height_usize;
-    let file_size = 54 + pixel_data_size;
-
-    let mut buffer = Vec::with_capacity(file_size);
-    write_bmp_headers(&mut buffer, width, height, pixel_data_size, file_size);
-
-    let padding = [0u8; 3];
-    let expected_bytes = row_bytes * height_usize;
-    for row in 0..height_usize {
-        let start = row * row_bytes;
-        if start + row_bytes > rgb.len() || start + row_bytes > expected_bytes {
-            break;
-        }
-        for pixel in rgb[start..start + row_bytes].chunks_exact(3) {
-            buffer.push(pixel[2]);
-            buffer.push(pixel[1]);
-            buffer.push(pixel[0]);
-        }
-        if pad > 0 {
-            buffer.extend_from_slice(&padding[..pad]);
-        }
-    }
-    buffer
-}
-
-fn bmp_from_bgra(frame: &Frame) -> Vec<u8> {
-    let width = frame.width as usize;
-    let height = frame.height as usize;
-    let stride = frame.stride as usize;
-    let effective_stride = if stride == 0 { width * 4 } else { stride };
-    let row_bytes = width * 3;
-    let row_padded = (row_bytes + 3) & !3;
-    let pad = row_padded - row_bytes;
-    let pixel_data_size = row_padded * height;
-    let file_size = 54 + pixel_data_size;
-
-    let mut buffer = Vec::with_capacity(file_size);
-    write_bmp_headers(
-        &mut buffer,
-        frame.width,
-        frame.height,
-        pixel_data_size,
-        file_size,
-    );
-
-    let padding = [0u8; 3];
-    let data = &frame.plane_primary;
-    for row in 0..height {
-        let row_start = row * effective_stride;
-        let row_end = (row_start + width * 4).min(data.len());
-        let row_slice = &data[row_start.min(data.len())..row_end];
-        for pixel in row_slice.chunks_exact(4) {
-            buffer.push(pixel[0]);
-            buffer.push(pixel[1]);
-            buffer.push(pixel[2]);
-        }
-        if pad > 0 {
-            buffer.extend_from_slice(&padding[..pad]);
-        }
-    }
-
-    buffer
-}
-
-fn write_bmp_headers(
-    buffer: &mut Vec<u8>,
-    width: u32,
-    height: u32,
-    pixel_data_size: usize,
-    file_size: usize,
-) {
-    buffer.extend_from_slice(b"BM");
-    buffer.extend_from_slice(&(file_size as u32).to_le_bytes());
-    buffer.extend_from_slice(&0u32.to_le_bytes());
-    buffer.extend_from_slice(&54u32.to_le_bytes());
-    buffer.extend_from_slice(&40u32.to_le_bytes());
-    buffer.extend_from_slice(&(width as i32).to_le_bytes());
-    buffer.extend_from_slice(&(-(height as i32)).to_le_bytes());
-    buffer.extend_from_slice(&1u16.to_le_bytes());
-    buffer.extend_from_slice(&24u16.to_le_bytes());
-    buffer.extend_from_slice(&0u32.to_le_bytes());
-    buffer.extend_from_slice(&(pixel_data_size as u32).to_le_bytes());
-    buffer.extend_from_slice(&2835i32.to_le_bytes());
-    buffer.extend_from_slice(&2835i32.to_le_bytes());
-    buffer.extend_from_slice(&0u32.to_le_bytes());
-    buffer.extend_from_slice(&0u32.to_le_bytes());
 }
 
 fn refresh_devices(
@@ -255,10 +210,9 @@ fn App() -> Element {
     let selected_index = use_signal(|| 0usize);
     let status = use_signal(|| "Idle".to_string());
     let session: Signal<Option<Session>> = use_signal(|| None);
-    let preview_tick = use_signal(|| 0u64);
     let saved_path = use_signal(|| None::<String>);
     let source_mode = use_signal(|| SourceMode::Usb);
-    let rtsp_url = use_signal(String::new);
+    let rtsp_url = use_signal(|| "rtsp://127.0.0.1:8554/live".to_string());
     let rtsp_username = use_signal(String::new);
     let rtsp_password = use_signal(String::new);
 
@@ -266,14 +220,6 @@ fn App() -> Element {
 
     use_effect(move || {
         refresh_devices(devices, status, selected_index);
-    });
-
-    use_future(move || async move {
-        loop {
-            tokio::time::sleep(Duration::from_millis(33)).await;
-            let next = preview_tick.peek().wrapping_add(1);
-            preview_tick.clone().set(next);
-        }
     });
 
     let refresh = move |_| {
@@ -515,12 +461,11 @@ fn App() -> Element {
             }
 
             section { class: "preview",
-                if is_connected {
-                    img {
-                        class: "preview-image",
-                        src: "{PREVIEW_URL_BASE}/frame.bmp?t={preview_tick()}",
-                    }
-                } else {
+                canvas {
+                    id: "chimeras-preview",
+                    class: if is_connected { "preview-canvas" } else { "preview-canvas hidden" },
+                }
+                if !is_connected {
                     div { class: "preview-placeholder",
                         div { class: "placeholder-icon", "●" }
                         div { class: "placeholder-text",
@@ -535,6 +480,7 @@ fn App() -> Element {
                     }
                 }
             }
+            script { dangerous_inner_html: "window.__chimerasPreviewUrl={PREVIEW_FETCH_URL:?};{PREVIEW_JS}" }
 
             if let Some(path) = saved_path() {
                 section { class: "saved-note",

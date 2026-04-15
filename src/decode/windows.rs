@@ -2,8 +2,9 @@
 //!
 //! Instantiates the OS-bundled `IMFTransform` for the requested codec (H.264 / HEVC),
 //! configures input and output media types, and runs a `ProcessInput` / `ProcessOutput`
-//! pump. Output is requested as NV12 because every MF hardware decoder supports it;
-//! we convert NV12 -> BGRA using the shared converter in `crate::convert`.
+//! pump. Output is requested as NV12 because every MF hardware decoder supports it.
+//! Frames are handed to the caller as native NV12 (Y in `plane_primary`, interleaved
+//! UV in `plane_secondary`) so downstream code can do colour conversion on the GPU.
 
 use super::{VideoCodec, VideoDecoder};
 use crate::error::Error;
@@ -23,6 +24,7 @@ pub(crate) struct MediaFoundationDecoder {
     stride: u32,
     #[allow(dead_code)]
     codec: VideoCodec,
+    parameter_sets_annex_b: Vec<u8>,
     mf_started: bool,
 }
 
@@ -41,7 +43,13 @@ impl VideoDecoder for MediaFoundationDecoder {
         };
 
         let transform = activate_decoder(subtype)?;
-        let (input_type, width, height) = build_input_type(subtype, extradata)?;
+        unsafe {
+            if let Ok(attrs) = transform.GetAttributes() {
+                let _ = attrs.SetUINT32(&MF_LOW_LATENCY, 1);
+            }
+        }
+        let parameter_sets_annex_b = extradata_to_annex_b(codec, extradata);
+        let (input_type, width, height) = build_input_type(codec, subtype, extradata)?;
         unsafe {
             transform
                 .SetInputType(0, &input_type, 0)
@@ -70,12 +78,20 @@ impl VideoDecoder for MediaFoundationDecoder {
             height,
             stride,
             codec,
+            parameter_sets_annex_b,
             mf_started: true,
         })
     }
 
     fn decode(&mut self, nal: &[u8], timestamp: Duration) -> Result<Vec<Frame>, Error> {
-        let input_sample = build_input_sample(nal, timestamp)?;
+        let converted = avcc_to_annex_b(nal);
+        if converted.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut annex_b = Vec::with_capacity(self.parameter_sets_annex_b.len() + converted.len());
+        annex_b.extend_from_slice(&self.parameter_sets_annex_b);
+        annex_b.extend_from_slice(&converted);
+        let input_sample = build_input_sample(&annex_b, timestamp)?;
         unsafe {
             self.transform
                 .ProcessInput(0, &input_sample, 0)
@@ -90,58 +106,92 @@ impl VideoDecoder for MediaFoundationDecoder {
     }
 }
 
+fn avcc_to_annex_b(avcc: &[u8]) -> Vec<u8> {
+    const START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
+    let mut annex_b = Vec::with_capacity(avcc.len());
+    let mut offset = 0;
+    while offset + 4 <= avcc.len() {
+        let len = u32::from_be_bytes([
+            avcc[offset],
+            avcc[offset + 1],
+            avcc[offset + 2],
+            avcc[offset + 3],
+        ]) as usize;
+        offset += 4;
+        if len == 0 || offset + len > avcc.len() {
+            break;
+        }
+        annex_b.extend_from_slice(&START_CODE);
+        annex_b.extend_from_slice(&avcc[offset..offset + len]);
+        offset += len;
+    }
+    annex_b
+}
+
 impl MediaFoundationDecoder {
     fn pull_output(&mut self) -> Result<Option<Frame>, Error> {
-        let info = unsafe { self.transform.GetOutputStreamInfo(0) }.map_err(map_error)?;
-        let provides_samples = info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32) != 0;
+        for _ in 0..4 {
+            let info = unsafe { self.transform.GetOutputStreamInfo(0) }.map_err(map_error)?;
+            let provides_samples =
+                info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32) != 0;
 
-        let pre_allocated = if provides_samples {
-            None
-        } else {
-            Some(create_empty_output_sample(self.width, self.height)?)
-        };
+            let pre_allocated = if provides_samples {
+                None
+            } else {
+                let required = info.cbSize.max(1);
+                Some(create_output_sample(required)?)
+            };
 
-        let mut buffer = MFT_OUTPUT_DATA_BUFFER {
-            dwStreamID: 0,
-            pSample: std::mem::ManuallyDrop::new(pre_allocated),
-            dwStatus: 0,
-            pEvents: std::mem::ManuallyDrop::new(None),
-        };
+            let mut buffer = MFT_OUTPUT_DATA_BUFFER {
+                dwStreamID: 0,
+                pSample: std::mem::ManuallyDrop::new(pre_allocated),
+                dwStatus: 0,
+                pEvents: std::mem::ManuallyDrop::new(None),
+            };
 
-        let mut status = 0u32;
-        let hr = unsafe {
-            self.transform
-                .ProcessOutput(0, std::slice::from_mut(&mut buffer), &mut status)
-        };
+            let mut status = 0u32;
+            let hr = unsafe {
+                self.transform
+                    .ProcessOutput(0, std::slice::from_mut(&mut buffer), &mut status)
+            };
 
-        match hr {
-            Ok(()) => {
-                let decoded = unsafe { std::mem::ManuallyDrop::take(&mut buffer.pSample) };
-                let Some(sample) = decoded else {
+            match hr {
+                Ok(()) => {
+                    let decoded = unsafe { std::mem::ManuallyDrop::take(&mut buffer.pSample) };
+                    let Some(sample) = decoded else {
+                        return Ok(None);
+                    };
+                    if self.width == 0 || self.height == 0 {
+                        return Ok(None);
+                    }
+                    let (y_plane, uv_plane) = sample_to_nv12(&sample, self.height, self.stride)?;
+                    return Ok(Some(Frame {
+                        width: self.width,
+                        height: self.height,
+                        stride: self.stride,
+                        timestamp: Duration::ZERO,
+                        pixel_format: PixelFormat::Nv12,
+                        quality: FrameQuality::Intact,
+                        plane_primary: Bytes::from(y_plane),
+                        plane_secondary: Bytes::from(uv_plane),
+                    }));
+                }
+                Err(error) if error.code().0 == MF_E_TRANSFORM_NEED_MORE_INPUT.0 => {
                     return Ok(None);
-                };
-                let bgra = sample_to_bgra(&sample, self.width, self.height, self.stride)?;
-                Ok(Some(Frame {
-                    width: self.width,
-                    height: self.height,
-                    stride: self.width * 4,
-                    timestamp: Duration::ZERO,
-                    pixel_format: PixelFormat::Bgra8,
-                    quality: FrameQuality::Intact,
-                    plane_primary: Bytes::from(bgra),
-                    plane_secondary: Bytes::new(),
-                }))
+                }
+                Err(error) if error.code().0 == MF_E_TRANSFORM_STREAM_CHANGE.0 => {
+                    self.reconfigure_output()?;
+                    continue;
+                }
+                Err(error) => {
+                    return Err(Error::Backend {
+                        platform: "windows",
+                        message: format!("ProcessOutput failed: {}", error.message()),
+                    });
+                }
             }
-            Err(error) if error.code().0 == MF_E_TRANSFORM_NEED_MORE_INPUT.0 => Ok(None),
-            Err(error) if error.code().0 == MF_E_TRANSFORM_STREAM_CHANGE.0 => {
-                self.reconfigure_output()?;
-                Ok(None)
-            }
-            Err(error) => Err(Error::Backend {
-                platform: "windows",
-                message: format!("ProcessOutput failed: {}", error.message()),
-            }),
         }
+        Ok(None)
     }
 
     fn reconfigure_output(&mut self) -> Result<(), Error> {
@@ -164,7 +214,8 @@ impl MediaFoundationDecoder {
                             unsafe { media_type.GetUINT64(&MF_MT_FRAME_SIZE).map_err(map_error)? };
                         self.width = (packed >> 32) as u32;
                         self.height = (packed & 0xFFFF_FFFF) as u32;
-                        self.stride = nv12_stride(self.width);
+                        self.stride = unsafe { media_type.GetUINT32(&MF_MT_DEFAULT_STRIDE) }
+                            .unwrap_or_else(|_| nv12_stride(self.width));
                         self.output_type = media_type;
                         return Ok(());
                     }
@@ -229,7 +280,11 @@ fn activate_decoder(subtype: GUID) -> Result<IMFTransform, Error> {
     Ok(transform)
 }
 
-fn build_input_type(subtype: GUID, _extradata: &[u8]) -> Result<(IMFMediaType, u32, u32), Error> {
+fn build_input_type(
+    codec: VideoCodec,
+    subtype: GUID,
+    extradata: &[u8],
+) -> Result<(IMFMediaType, u32, u32), Error> {
     let media_type = unsafe { MFCreateMediaType().map_err(map_error)? };
     unsafe {
         media_type
@@ -241,8 +296,91 @@ fn build_input_type(subtype: GUID, _extradata: &[u8]) -> Result<(IMFMediaType, u
         media_type
             .SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)
             .map_err(map_error)?;
+        if !extradata.is_empty() {
+            let sequence_header = extradata_to_annex_b(codec, extradata);
+            if !sequence_header.is_empty() {
+                media_type
+                    .SetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, &sequence_header)
+                    .map_err(map_error)?;
+            }
+        }
     }
     Ok((media_type, 0, 0))
+}
+
+fn extradata_to_annex_b(codec: VideoCodec, extradata: &[u8]) -> Vec<u8> {
+    const START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
+    let mut out = Vec::with_capacity(extradata.len() + 16);
+    match codec {
+        VideoCodec::H264 => {
+            if extradata.len() < 7 {
+                return out;
+            }
+            let num_sps = (extradata[5] & 0x1F) as usize;
+            let mut offset = 6;
+            for _ in 0..num_sps {
+                if offset + 2 > extradata.len() {
+                    return out;
+                }
+                let len = u16::from_be_bytes([extradata[offset], extradata[offset + 1]]) as usize;
+                offset += 2;
+                if offset + len > extradata.len() {
+                    return out;
+                }
+                out.extend_from_slice(&START_CODE);
+                out.extend_from_slice(&extradata[offset..offset + len]);
+                offset += len;
+            }
+            if offset >= extradata.len() {
+                return out;
+            }
+            let num_pps = extradata[offset] as usize;
+            offset += 1;
+            for _ in 0..num_pps {
+                if offset + 2 > extradata.len() {
+                    return out;
+                }
+                let len = u16::from_be_bytes([extradata[offset], extradata[offset + 1]]) as usize;
+                offset += 2;
+                if offset + len > extradata.len() {
+                    return out;
+                }
+                out.extend_from_slice(&START_CODE);
+                out.extend_from_slice(&extradata[offset..offset + len]);
+                offset += len;
+            }
+        }
+        VideoCodec::H265 => {
+            if extradata.len() < 23 {
+                return out;
+            }
+            let num_arrays = extradata[22] as usize;
+            let mut offset = 23;
+            for _ in 0..num_arrays {
+                if offset + 3 > extradata.len() {
+                    return out;
+                }
+                let num_nalus =
+                    u16::from_be_bytes([extradata[offset + 1], extradata[offset + 2]]) as usize;
+                offset += 3;
+                for _ in 0..num_nalus {
+                    if offset + 2 > extradata.len() {
+                        return out;
+                    }
+                    let len =
+                        u16::from_be_bytes([extradata[offset], extradata[offset + 1]]) as usize;
+                    offset += 2;
+                    if offset + len > extradata.len() {
+                        return out;
+                    }
+                    out.extend_from_slice(&START_CODE);
+                    out.extend_from_slice(&extradata[offset..offset + len]);
+                    offset += len;
+                }
+            }
+        }
+    }
+    out
 }
 
 fn select_output_type(
@@ -297,22 +435,20 @@ fn build_input_sample(nal: &[u8], timestamp: Duration) -> Result<IMFSample, Erro
     }
 }
 
-fn create_empty_output_sample(width: u32, height: u32) -> Result<IMFSample, Error> {
-    let frame_size = nv12_frame_size(width, height);
+fn create_output_sample(size: u32) -> Result<IMFSample, Error> {
     unsafe {
-        let buffer = MFCreateMemoryBuffer(frame_size).map_err(map_error)?;
+        let buffer = MFCreateMemoryBuffer(size).map_err(map_error)?;
         let sample = MFCreateSample().map_err(map_error)?;
         sample.AddBuffer(&buffer).map_err(map_error)?;
         Ok(sample)
     }
 }
 
-fn sample_to_bgra(
+fn sample_to_nv12(
     sample: &IMFSample,
-    width: u32,
     height: u32,
     stride: u32,
-) -> Result<Vec<u8>, Error> {
+) -> Result<(Vec<u8>, Vec<u8>), Error> {
     let buffer = unsafe { sample.ConvertToContiguousBuffer().map_err(map_error)? };
     let mut base_ptr: *mut u8 = std::ptr::null_mut();
     let mut max_length = 0u32;
@@ -327,69 +463,27 @@ fn sample_to_bgra(
             .map_err(map_error)?;
     }
 
-    let width_usize = width as usize;
     let height_usize = height as usize;
-    let y_stride = stride as usize;
-    let y_size = y_stride * height_usize;
-    let uv_size = y_stride * (height_usize / 2);
+    let stride_usize = stride as usize;
+    let y_size = stride_usize * height_usize;
+    let uv_size = stride_usize * (height_usize / 2);
     let total = y_size + uv_size;
 
-    let mut bgra = vec![0u8; width_usize * height_usize * 4];
-    if !base_ptr.is_null() && (current_length as usize) >= total {
+    let (y_plane, uv_plane) = if !base_ptr.is_null() && (current_length as usize) >= total {
         let slice = unsafe { std::slice::from_raw_parts(base_ptr, total) };
-        let (y_plane, uv_plane) = slice.split_at(y_size);
-        nv12_to_bgra(
-            y_plane,
-            uv_plane,
-            y_stride,
-            width_usize,
-            height_usize,
-            &mut bgra,
-        );
-    }
+        (slice[..y_size].to_vec(), slice[y_size..].to_vec())
+    } else {
+        (vec![0u8; y_size], vec![0u8; uv_size])
+    };
 
     unsafe {
         let _ = buffer.Unlock();
     }
-    Ok(bgra)
-}
-
-fn nv12_to_bgra(
-    y_plane: &[u8],
-    uv_plane: &[u8],
-    stride: usize,
-    width: usize,
-    height: usize,
-    bgra: &mut [u8],
-) {
-    for row in 0..height {
-        for col in 0..width {
-            let y = y_plane[row * stride + col] as i32;
-            let uv_row = row / 2;
-            let uv_col = (col / 2) * 2;
-            let uv_index = uv_row * stride + uv_col;
-            let u = uv_plane[uv_index] as i32 - 128;
-            let v = uv_plane[uv_index + 1] as i32 - 128;
-            let c = y - 16;
-            let r = ((298 * c + 409 * v + 128) >> 8).clamp(0, 255) as u8;
-            let g = ((298 * c - 100 * u - 208 * v + 128) >> 8).clamp(0, 255) as u8;
-            let b = ((298 * c + 516 * u + 128) >> 8).clamp(0, 255) as u8;
-            let base = (row * width + col) * 4;
-            bgra[base] = b;
-            bgra[base + 1] = g;
-            bgra[base + 2] = r;
-            bgra[base + 3] = 255;
-        }
-    }
+    Ok((y_plane, uv_plane))
 }
 
 fn nv12_stride(width: u32) -> u32 {
     (width + 15) & !15
-}
-
-fn nv12_frame_size(width: u32, height: u32) -> u32 {
-    let stride = nv12_stride(width);
-    stride * height + stride * (height / 2)
 }
 
 fn map_error(error: windows::core::Error) -> Error {

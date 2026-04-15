@@ -263,7 +263,7 @@ async fn run_session(
                 }
                 Err(error) => {
                     let _ = frame_tx.try_send(Err(error));
-                    break;
+                    continue;
                 }
             },
             None => {
