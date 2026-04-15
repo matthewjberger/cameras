@@ -11,16 +11,16 @@ use crate::error::Error;
 use crate::types::{Frame, FrameQuality, PixelFormat};
 use bytes::Bytes;
 use objc2::rc::Retained;
-use objc2_core_foundation::{CFDictionary, CFMutableDictionary, CFNumber, CFRetained, CFString};
 use objc2_core_media::{
     CMBlockBuffer, CMBlockBufferCreateWithMemoryBlock, CMFormatDescription, CMSampleBuffer,
-    CMSampleBufferCreate, CMTime, CMTimeFlags, CMVideoFormatDescriptionCreateFromH264ParameterSets,
-    CMVideoFormatDescriptionCreateFromHEVCParameterSets,
+    CMSampleBufferCreate, CMSampleTimingInfo, CMTime, CMTimeFlags,
+    CMVideoFormatDescriptionCreateFromH264ParameterSets,
+    CMVideoFormatDescriptionCreateFromHEVCParameterSets, kCMTimeInvalid,
 };
 use objc2_core_video::{
     CVImageBuffer, CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
-    CVPixelBufferGetHeight, CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress,
-    CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress, kCVPixelBufferPixelFormatTypeKey,
+    CVPixelBufferGetHeight, CVPixelBufferGetPixelFormatType, CVPixelBufferGetWidth,
+    CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
     kCVPixelFormatType_32BGRA,
 };
 use objc2_video_toolbox::{
@@ -54,7 +54,6 @@ impl VideoDecoder for VideoToolboxDecoder {
     fn new(codec: VideoCodec, extradata: &[u8]) -> Result<Self, Error> {
         let format_desc = build_format_description(codec, extradata)?;
         let output = Arc::new(Mutex::new(OutputQueue::default()));
-        let attrs = build_destination_attributes();
 
         let callback = VTDecompressionOutputCallbackRecord {
             decompressionOutputCallback: Some(output_callback),
@@ -67,7 +66,7 @@ impl VideoDecoder for VideoToolboxDecoder {
                 None,
                 &format_desc,
                 None,
-                attrs.as_deref(),
+                None,
                 &callback,
                 NonNull::from(&mut raw_session),
             )
@@ -106,7 +105,7 @@ impl VideoDecoder for VideoToolboxDecoder {
                 &sample,
                 VTDecodeFrameFlags::empty(),
                 std::ptr::null_mut(),
-                NonNull::from(&mut info_flags),
+                &mut info_flags,
             )
         };
         if status != 0 {
@@ -169,43 +168,65 @@ fn pixel_buffer_to_frame(pb: &CVPixelBuffer) -> Option<Frame> {
 
     let width = CVPixelBufferGetWidth(pb) as u32;
     let height = CVPixelBufferGetHeight(pb) as u32;
-    let stride = CVPixelBufferGetBytesPerRow(pb) as u32;
-    let base = CVPixelBufferGetBaseAddress(pb);
-
-    let mut data = Vec::new();
-    if !base.is_null() {
-        let byte_count = stride as usize * height as usize;
-        data = unsafe { std::slice::from_raw_parts(base as *const u8, byte_count) }.to_vec();
-    }
+    let format_code = CVPixelBufferGetPixelFormatType(pb);
+    let result = if format_code == kCVPixelFormatType_32BGRA {
+        copy_single_plane_frame(pb, width, height, PixelFormat::Bgra8)
+    } else {
+        copy_nv12_frame(pb, width, height)
+    };
 
     unsafe {
         CVPixelBufferUnlockBaseAddress(pb, CVPixelBufferLockFlags::ReadOnly);
     }
+    result
+}
 
+fn copy_single_plane_frame(
+    pb: &CVPixelBuffer,
+    width: u32,
+    height: u32,
+    pixel_format: PixelFormat,
+) -> Option<Frame> {
+    let stride = CVPixelBufferGetBytesPerRow(pb) as u32;
+    let base = CVPixelBufferGetBaseAddress(pb);
+    if base.is_null() {
+        return None;
+    }
+    let byte_count = stride as usize * height as usize;
+    let data = unsafe { std::slice::from_raw_parts(base as *const u8, byte_count) }.to_vec();
     Some(Frame {
         width,
         height,
         stride,
         timestamp: Duration::ZERO,
-        pixel_format: PixelFormat::Bgra8,
+        pixel_format,
         quality: FrameQuality::Intact,
         plane_primary: Bytes::from(data),
         plane_secondary: Bytes::new(),
     })
 }
 
-fn build_destination_attributes() -> Option<CFRetained<CFDictionary>> {
-    let dict = CFMutableDictionary::new();
-    let key: &CFString = unsafe { kCVPixelBufferPixelFormatTypeKey };
-    let value = CFNumber::new_i32(kCVPixelFormatType_32BGRA as i32);
-    unsafe {
-        CFDictionary::set_value(
-            &dict,
-            key as *const CFString as *const c_void,
-            &*value as *const CFNumber as *const c_void,
-        );
+fn copy_nv12_frame(pb: &CVPixelBuffer, width: u32, height: u32) -> Option<Frame> {
+    let stride = CVPixelBufferGetBytesPerRow(pb) as u32;
+    let base = CVPixelBufferGetBaseAddress(pb);
+    if base.is_null() {
+        return None;
     }
-    Some(dict.into())
+    let y_size = stride as usize * height as usize;
+    let uv_size = stride as usize * (height as usize / 2);
+    let total = y_size + uv_size;
+    let slice = unsafe { std::slice::from_raw_parts(base as *const u8, total) };
+    let (y_plane, uv_plane) = slice.split_at(y_size);
+    Some(Frame {
+        width,
+        height,
+        stride,
+        timestamp: Duration::ZERO,
+        pixel_format: PixelFormat::Nv12,
+        quality: FrameQuality::Intact,
+        plane_primary: Bytes::copy_from_slice(y_plane),
+        plane_secondary: Bytes::copy_from_slice(uv_plane),
+    })
 }
 
 fn build_format_description(
@@ -397,7 +418,12 @@ fn create_sample_buffer(
     timestamp: Duration,
 ) -> Result<Retained<CMSampleBuffer>, Error> {
     let mut raw: *mut CMSampleBuffer = std::ptr::null_mut();
-    let pts = duration_to_cmtime(timestamp);
+    let invalid = unsafe { kCMTimeInvalid };
+    let timing = CMSampleTimingInfo {
+        duration: invalid,
+        presentationTimeStamp: duration_to_cmtime(timestamp),
+        decodeTimeStamp: invalid,
+    };
     let status = unsafe {
         CMSampleBufferCreate(
             None,
@@ -408,7 +434,7 @@ fn create_sample_buffer(
             Some(format),
             1,
             1,
-            &pts,
+            &timing,
             0,
             std::ptr::null(),
             NonNull::from(&mut raw),
