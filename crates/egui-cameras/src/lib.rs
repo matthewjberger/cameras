@@ -17,9 +17,10 @@
 //! }
 //!
 //! impl eframe::App for App {
-//!     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-//!         egui_cameras::update_texture(&mut self.stream, ctx).ok();
-//!         egui::CentralPanel::default().show(ctx, |ui| {
+//!     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+//!         let ctx = ui.ctx().clone();
+//!         egui_cameras::update_texture(&mut self.stream, &ctx).ok();
+//!         egui::CentralPanel::default().show_inside(ui, |ui| {
 //!             egui_cameras::show(&self.stream, ui);
 //!         });
 //!         ctx.request_repaint();

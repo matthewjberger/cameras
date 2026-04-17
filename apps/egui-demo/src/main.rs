@@ -409,17 +409,18 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         if self.autofocus.is_some() {
-            self.tick_autofocus(ctx);
+            self.tick_autofocus(&ctx);
         }
         if let Some(stream) = &mut self.stream
-            && let Err(error) = egui_cameras::update_texture(stream, ctx)
+            && let Err(error) = egui_cameras::update_texture(stream, &ctx)
         {
             self.status = format!("Texture upload failed: {error}");
         }
 
-        egui::TopBottomPanel::top("bar").show(ctx, |ui| {
+        egui::Panel::top("bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("cameras egui demo");
                 ui.separator();
@@ -495,7 +496,7 @@ impl eframe::App for App {
         });
 
         if self.stream.is_some() {
-            egui::TopBottomPanel::bottom("actions").show(ctx, |ui| {
+            egui::Panel::bottom("actions").show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     let preview_label = if self.active {
                         "Preview: on"
@@ -576,7 +577,7 @@ impl eframe::App for App {
             });
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             if let Some(stream) = &self.stream {
                 egui_cameras::show(stream, ui);
             } else {

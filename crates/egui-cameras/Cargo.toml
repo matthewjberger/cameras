@@ -34,4 +34,4 @@ rtsp = ["cameras/rtsp"]
 
 [dependencies]
 cameras = { version = "0.1", path = "../cameras" }
-egui = "0.32"
+egui = "0.34"
