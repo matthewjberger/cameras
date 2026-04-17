@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="assets/aperture.svg" alt="" width="48" align="center">
+  <img src="assets/chimeras.svg" alt="" width="48" align="center">
   chimeras
 </h1>
 
