@@ -189,6 +189,26 @@ fn StreamCell(id: u32, streams: UseStreams, devices: UseDevices) -> Element {
         last_capture.clone().set("Queued controls apply".into());
     };
 
+    let reset_defaults = move |_| {
+        let Some(device) = connected_device.peek().clone() else {
+            last_capture.clone().set("No USB device".into());
+            return;
+        };
+        match cameras::reset_to_defaults(&device) {
+            Ok(()) => {
+                let refreshed = cameras::read_controls(&device).unwrap_or_default();
+                current_controls.clone().set(refreshed);
+                pending_controls.clone().set(Controls::default());
+                last_capture
+                    .clone()
+                    .set("Controls reset to factory defaults".into());
+            }
+            Err(error) => {
+                last_capture.clone().set(format!("Reset failed: {error}"));
+            }
+        }
+    };
+
     let disconnect = move |_| source.clone().set(None);
 
     let remove = move |_| {
@@ -481,12 +501,15 @@ fn StreamCell(id: u32, streams: UseStreams, devices: UseDevices) -> Element {
                     if let Some(caps) = caps_read.as_ref() {
                         render_controls_block(
                             caps,
-                            current_controls,
-                            pending_controls,
-                            connected_device,
-                            apply_sender,
-                            live_apply,
+                            ControlsEditor {
+                                current: current_controls,
+                                pending: pending_controls,
+                                device: connected_device,
+                                apply_sender,
+                                live_apply,
+                            },
                             apply_controls,
+                            reset_defaults,
                         )
                     } else {
                         rsx! {}
@@ -578,15 +601,28 @@ fn render_capabilities_block(
     }
 }
 
-fn render_controls_block(
-    capabilities: &ControlCapabilities,
+#[derive(Copy, Clone)]
+struct ControlsEditor {
     current: Signal<Controls>,
     pending: Signal<Controls>,
     device: Signal<Option<Device>>,
     apply_sender: Signal<ApplySender>,
     live_apply: Signal<bool>,
+}
+
+fn render_controls_block(
+    capabilities: &ControlCapabilities,
+    editor: ControlsEditor,
     apply_handler: impl FnMut(dioxus::prelude::Event<dioxus::events::MouseData>) + 'static,
+    reset_handler: impl FnMut(dioxus::prelude::Event<dioxus::events::MouseData>) + 'static,
 ) -> Element {
+    let ControlsEditor {
+        current,
+        pending,
+        device,
+        apply_sender,
+        live_apply,
+    } = editor;
     let numeric_rows = [
         (
             "focus",
@@ -733,11 +769,18 @@ fn render_controls_block(
                     }
                 }
             }
-            if !live_on {
+            div { class: "stream-cell-actions",
+                if !live_on {
+                    button {
+                        class: "btn btn-primary",
+                        onclick: apply_handler,
+                        "Apply controls"
+                    }
+                }
                 button {
-                    class: "btn btn-primary",
-                    onclick: apply_handler,
-                    "Apply controls"
+                    class: "btn btn-ghost",
+                    onclick: reset_handler,
+                    "Reset to defaults"
                 }
             }
         }

@@ -349,6 +349,22 @@ impl App {
         }
     }
 
+    fn reset_to_defaults(&mut self) {
+        let Some(device) = self.devices.get(self.selected_device) else {
+            return;
+        };
+        match cameras::reset_to_defaults(device) {
+            Ok(()) => {
+                self.current_controls = cameras::read_controls(device).unwrap_or_default();
+                self.pending_controls = Controls::default();
+                self.last_capture = Some("Controls reset to factory defaults".into());
+            }
+            Err(error) => {
+                self.last_capture = Some(format!("Reset failed: {error}"));
+            }
+        }
+    }
+
     fn analyze_frame(&mut self) {
         let Some(stream) = &self.stream else {
             return;
@@ -528,6 +544,9 @@ impl eframe::App for App {
                             ui.checkbox(&mut self.live_apply, "Apply live");
                             if !self.live_apply && ui.button("Apply").clicked() {
                                 self.queue_apply();
+                            }
+                            if ui.button("Reset to defaults").clicked() {
+                                self.reset_to_defaults();
                             }
                             let has_focus = self
                                 .capabilities

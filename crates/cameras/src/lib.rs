@@ -139,7 +139,8 @@ pub use camera::{Camera, next_frame, try_next_frame};
 #[cfg(feature = "controls")]
 pub use controls::{
     ControlCapabilities, ControlKind, ControlRange, Controls, PowerLineFrequency,
-    PowerLineFrequencyCapability, apply_controls, control_capabilities, read_controls,
+    PowerLineFrequencyCapability, apply_controls, control_capabilities, default_controls,
+    read_controls, reset_to_defaults,
 };
 pub use convert::{to_rgb8, to_rgba8};
 pub use error::Error;

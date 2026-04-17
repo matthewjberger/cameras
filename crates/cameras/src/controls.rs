@@ -306,3 +306,80 @@ pub fn read_controls(device: &Device) -> Result<Controls, Error> {
 pub fn apply_controls(device: &Device, controls: &Controls) -> Result<(), Error> {
     <ActiveBackend as BackendControls>::apply_controls(&device.id, controls)
 }
+
+/// Build a [`Controls`] that, when applied, returns every exposed control to
+/// a sensible "factory" state.
+///
+/// For axes that have an auto mode (focus, exposure, white-balance
+/// temperature), prefers enabling auto over writing a manual default: on
+/// most UVC devices writing a manual value implicitly disables auto, so
+/// leaving the numeric field `None` lets the camera's own AE / AF / AWB
+/// algorithms converge instead of pinning a stale value. When auto is not
+/// available on an axis, the numeric field falls back to
+/// [`ControlRange::default`].
+///
+/// Orphan numeric fields (brightness, contrast, saturation, sharpness, gain,
+/// backlight_compensation, pan, tilt, zoom, power_line_frequency) always
+/// carry their platform-reported default, because UVC has no auto mode for
+/// image-adjustment knobs.
+///
+/// Fields the device does not expose stay `None`.
+///
+/// Platform caveats apply: V4L2 reports genuine driver defaults; Media
+/// Foundation reports UVC-populated defaults which most drivers honor;
+/// AVFoundation synthesizes defaults from current-state reads rather than
+/// tracking true factory values.
+pub fn default_controls(capabilities: &ControlCapabilities) -> Controls {
+    let auto_toggle = |supported: Option<bool>| match supported {
+        Some(true) => Some(true),
+        _ => None,
+    };
+    let numeric_with_auto_fallback = |range: Option<&ControlRange>, auto: Option<bool>| {
+        if auto == Some(true) {
+            None
+        } else {
+            range.map(|range| range.default)
+        }
+    };
+    Controls {
+        focus: numeric_with_auto_fallback(capabilities.focus.as_ref(), capabilities.auto_focus),
+        auto_focus: auto_toggle(capabilities.auto_focus),
+        exposure: numeric_with_auto_fallback(
+            capabilities.exposure.as_ref(),
+            capabilities.auto_exposure,
+        ),
+        auto_exposure: auto_toggle(capabilities.auto_exposure),
+        white_balance_temperature: numeric_with_auto_fallback(
+            capabilities.white_balance_temperature.as_ref(),
+            capabilities.auto_white_balance,
+        ),
+        auto_white_balance: auto_toggle(capabilities.auto_white_balance),
+        brightness: capabilities.brightness.as_ref().map(|range| range.default),
+        contrast: capabilities.contrast.as_ref().map(|range| range.default),
+        saturation: capabilities.saturation.as_ref().map(|range| range.default),
+        sharpness: capabilities.sharpness.as_ref().map(|range| range.default),
+        gain: capabilities.gain.as_ref().map(|range| range.default),
+        backlight_compensation: capabilities
+            .backlight_compensation
+            .as_ref()
+            .map(|range| range.default),
+        power_line_frequency: capabilities
+            .power_line_frequency
+            .as_ref()
+            .map(|capability| capability.default),
+        pan: capabilities.pan.as_ref().map(|range| range.default),
+        tilt: capabilities.tilt.as_ref().map(|range| range.default),
+        zoom: capabilities.zoom.as_ref().map(|range| range.default),
+    }
+}
+
+/// Probe the device's capabilities, build a defaults [`Controls`] via
+/// [`default_controls`], and apply it in one call.
+///
+/// Intended as a "the camera looks wrong, start over" escape hatch for UIs.
+/// See [`default_controls`] for the platform-specific meaning of "default."
+pub fn reset_to_defaults(device: &Device) -> Result<(), Error> {
+    let capabilities = control_capabilities(device)?;
+    let controls = default_controls(&capabilities);
+    apply_controls(device, &controls)
+}
