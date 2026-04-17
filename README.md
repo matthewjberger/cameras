@@ -1,143 +1,62 @@
-<h1 align="center">chimeras</h1>
+<h1 align="center">
+  <img src="assets/aperture.svg" alt="" width="48" align="center">
+  chimeras
+</h1>
+
+<p align="center"><strong>A cross-platform camera library for Rust, plus first-class UI-framework integrations.</strong></p>
 
 <p align="center">
   <a href="https://github.com/matthewjberger/chimeras"><img alt="github" src="https://img.shields.io/badge/github-matthewjberger/chimeras-8da0cb?style=for-the-badge&labelColor=555555&logo=github" height="20"></a>
-  <a href="https://crates.io/crates/chimeras"><img alt="crates.io" src="https://img.shields.io/crates/v/chimeras.svg?style=for-the-badge&color=fc8d62&logo=rust" height="20"></a>
-  <a href="https://docs.rs/chimeras"><img alt="docs.rs" src="https://img.shields.io/badge/docs.rs-chimeras-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs" height="20"></a>
   <a href="https://github.com/matthewjberger/chimeras/blob/main/LICENSE-MIT"><img alt="license" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=for-the-badge&labelColor=555555" height="20"></a>
 </p>
 
-<p align="center"><strong>A cross-platform camera library for Rust.</strong></p>
+## Crates
 
-<p align="center">
-  <code>cargo add chimeras</code>
-</p>
+| Crate | crates.io | docs.rs | Purpose |
+|-------|-----------|---------|---------|
+| [`chimeras`](crates/chimeras/) | [![crates.io](https://img.shields.io/crates/v/chimeras.svg?logo=rust&color=fc8d62)](https://crates.io/crates/chimeras) | [![docs.rs](https://img.shields.io/badge/docs.rs-chimeras-66c2a5?logo=docs.rs)](https://docs.rs/chimeras) | Enumerate, probe, open, and stream cameras. macOS (AVFoundation), Windows (Media Foundation), Linux (V4L2). Optional RTSP. |
+| [`dioxus-chimeras`](crates/dioxus-chimeras/) | [![crates.io](https://img.shields.io/crates/v/dioxus-chimeras.svg?logo=rust&color=fc8d62)](https://crates.io/crates/dioxus-chimeras) | [![docs.rs](https://img.shields.io/badge/docs.rs-dioxus--chimeras-66c2a5?logo=docs.rs)](https://docs.rs/dioxus-chimeras) | Hooks + components for using chimeras inside a Dioxus desktop app. WebGL2 preview rendering. |
+| [`egui-chimeras`](crates/egui-chimeras/) | [![crates.io](https://img.shields.io/crates/v/egui-chimeras.svg?logo=rust&color=fc8d62)](https://crates.io/crates/egui-chimeras) | [![docs.rs](https://img.shields.io/badge/docs.rs-egui--chimeras-66c2a5?logo=docs.rs)](https://docs.rs/egui-chimeras) | Helpers for using chimeras inside an egui / eframe app. Frame-to-texture conversion. |
 
-`chimeras` enumerates cameras, probes their supported formats, opens a streaming session, and delivers frames. It runs on macOS (AVFoundation), Windows (Media Foundation), and Linux (V4L2) with the same API on each platform.
+Each integration crate is thin; almost everything lives in `chimeras` itself (`chimeras::pump`, `chimeras::source`, `chimeras::monitor`, etc.). The integration crates just bridge a running `chimeras::pump::Pump` to the target UI framework's texture / canvas model.
 
-The public surface is plain data types (`Device`, `Capabilities`, `FormatDescriptor`, `StreamConfig`, `Frame`) and a handful of free functions. There are no trait objects in the public API, no hidden global state, and no `unsafe` required of consumers.
+## Layout
 
-https://github.com/user-attachments/assets/8e2f4a5f-0e70-4cf7-a8de-942c0d2fada5
-
-## Quick Start
-
-Add this to your `Cargo.toml`:
-
-```toml
-[dependencies]
-chimeras = "0.1"
+```
+chimeras/
+├── crates/
+│   ├── chimeras/         ← the core library
+│   ├── dioxus-chimeras/  ← Dioxus integration
+│   └── egui-chimeras/    ← egui integration
+└── apps/
+    ├── dioxus-demo/      ← multi-stream grid, USB + RTSP sources
+    └── egui-demo/        ← single-stream viewer with pause / snapshot
 ```
 
-And in `main.rs`:
-
-```rust
-use std::time::Duration;
-
-fn main() -> Result<(), chimeras::Error> {
-    let devices = chimeras::devices()?;
-    let device = devices.first().expect("no cameras");
-
-    let capabilities = chimeras::probe(device)?;
-    let config = chimeras::StreamConfig {
-        resolution: chimeras::Resolution { width: 1280, height: 720 },
-        framerate: 30,
-        pixel_format: chimeras::PixelFormat::Bgra8,
-    };
-
-    let camera = chimeras::open(device, config)?;
-    let frame = chimeras::next_frame(&camera, Duration::from_secs(2))?;
-    let rgb = chimeras::to_rgb8(&frame)?;
-
-    println!("{}x{}, {} bytes rgb", frame.width, frame.height, rgb.len());
-    Ok(())
-}
-```
-
-Dropping the `Camera` stops the stream. Dropping the `DeviceMonitor` joins its worker.
-
-## Platform Support
-
-| Platform | USB / Built-in | RTSP (`rtsp` feature) |
-|----------|----------------|------------------------|
-| macOS    | AVFoundation (via `objc2`) | retina + VideoToolbox (H.264 / H.265 / MJPEG) |
-| Windows  | Media Foundation (via `windows`) | retina + Media Foundation (H.264 / H.265 / MJPEG) |
-| Linux    | V4L2 mmap streaming (via `v4l`) | not supported |
-
-## API Overview
-
-Enumerate and probe:
-
-```rust
-let devices = chimeras::devices()?;
-let capabilities = chimeras::probe(&devices[0])?;
-```
-
-Open a camera and read frames:
-
-```rust
-let camera = chimeras::open(&devices[0], config)?;
-let frame = chimeras::next_frame(&camera, Duration::from_secs(2))?;
-```
-
-Convert pixel formats (BGRA8, RGBA8, YUYV, NV12, MJPEG via `zune-jpeg`):
-
-```rust
-let rgb = chimeras::to_rgb8(&frame)?;
-let rgba = chimeras::to_rgba8(&frame)?;
-```
-
-Watch for camera hotplug:
-
-```rust
-let monitor = chimeras::monitor()?;
-while let Ok(event) = chimeras::next_event(&monitor, Duration::from_secs(1)) {
-    match event {
-        chimeras::DeviceEvent::Added(device) => println!("+ {}", device.name),
-        chimeras::DeviceEvent::Removed(id) => println!("- {}", id.0),
-    }
-}
-```
-
-Pick a fallback format if the exact request is not supported:
-
-```rust
-let picked = chimeras::best_format(&capabilities, &config).expect("no fallback");
-```
-
-## Testing RTSP Locally
-
-The `demo/` app can view RTSP streams on macOS and Windows. To exercise the full path without a real IP camera, serve a local MP4 as an RTSP stream using [`mediamtx`](https://github.com/bluenviron/mediamtx) and `ffmpeg` (both on `PATH`):
+## Demos
 
 ```bash
-# terminal 1: start mediamtx with the repo's mediamtx.yml
-just rtsp-host
-
-# terminal 2: publish an MP4 file as an RTSP stream on rtsp://127.0.0.1:8554/live
-just rtsp-publish path/to/some.mp4
-
-# terminal 3: launch the demo app
-just run
+just run-dioxus   # Dioxus desktop app: multi-stream grid, USB + RTSP
+just run-egui     # egui / eframe app: single-stream viewer + snapshot
 ```
 
-In the demo window, switch the source toggle to **RTSP**, paste `rtsp://127.0.0.1:8554/live` into the URL field, and press **Connect**. On macOS and Windows, H.264/H.265 streams are hardware-decoded (VideoToolbox / Media Foundation); MJPEG streams are delivered verbatim and decoded via `zune-jpeg` on demand.
+## Versioning
 
-## Examples
+All three crates ship in lockstep on the same major + minor version (currently `0.2.x`). Use matching minor versions across your `Cargo.toml` when depending on them.
 
-See the [examples](examples/) directory:
-
-- `list.rs`: enumerate every camera and its capabilities
-- `capture.rs`: open a camera and pull 30 frames
+## Publishing
 
 ```bash
-cargo run --example list
-cargo run --example capture
+just publish       # chimeras
+just publish-dx    # dioxus-chimeras
+just publish-egui  # egui-chimeras
 ```
 
 ## License
 
-Licensed under either of
+Dual-licensed under either of
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- [MIT License](LICENSE-MIT)
+- [Apache License, Version 2.0](LICENSE-APACHE)
 
 at your option.

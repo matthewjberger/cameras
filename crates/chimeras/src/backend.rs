@@ -13,7 +13,7 @@ use crate::types::{Capabilities, Device, DeviceId, StreamConfig};
 /// The contract every platform backend implements.
 ///
 /// Users should not consume this trait directly; call the free functions at the crate
-/// root ([`crate::devices`], [`crate::probe`], [`crate::open`], [`crate::monitor`])
+/// root ([`crate::devices`], [`crate::probe`], [`crate::open`], [`crate::monitor()`])
 /// which dispatch through the active backend.
 pub trait Backend {
     /// Opaque platform-specific handle stored inside [`Camera`] to keep the OS session

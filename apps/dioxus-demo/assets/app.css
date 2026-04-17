@@ -342,14 +342,10 @@ body {
     justify-content: center;
 }
 
-.preview-canvas {
+.chimeras-preview-canvas {
     width: 100%;
     height: 100%;
     display: block;
-}
-
-.preview-canvas.hidden {
-    display: none;
 }
 
 .preview-placeholder {

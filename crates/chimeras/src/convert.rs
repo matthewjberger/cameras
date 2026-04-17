@@ -36,9 +36,12 @@ pub fn to_rgb8(frame: &Frame) -> Result<Vec<u8>, Error> {
 /// For formats without an alpha channel (RGB8, YUYV, NV12, MJPEG), the alpha byte is
 /// filled with 0xFF. For BGRA8, the channel order is swapped in place.
 pub fn to_rgba8(frame: &Frame) -> Result<Vec<u8>, Error> {
+    let width = frame.width as usize;
+    let height = frame.height as usize;
+    let stride = frame.stride as usize;
     match frame.pixel_format {
         PixelFormat::Rgba8 => Ok(frame.plane_primary.to_vec()),
-        PixelFormat::Bgra8 => Ok(bgra_to_rgba(&frame.plane_primary)),
+        PixelFormat::Bgra8 => Ok(bgra_to_rgba(&frame.plane_primary, width, height, stride)),
         _ => {
             let rgb = to_rgb8(frame)?;
             Ok(rgb_to_rgba(&rgb))
@@ -58,11 +61,7 @@ fn rgba_to_rgb(data: &[u8]) -> Vec<u8> {
 
 fn bgra_to_rgb(data: &[u8], width: usize, height: usize, stride: usize) -> Vec<u8> {
     let effective_stride = if stride == 0 { width * 4 } else { stride };
-    let rows_available = if effective_stride == 0 {
-        0
-    } else {
-        data.len() / effective_stride
-    };
+    let rows_available = data.len().checked_div(effective_stride).unwrap_or(0);
     let rows = height.min(rows_available);
     let row_bytes_wanted = width * 4;
     let mut output = Vec::with_capacity(rows * width * 3);
@@ -79,13 +78,25 @@ fn bgra_to_rgb(data: &[u8], width: usize, height: usize, stride: usize) -> Vec<u
     output
 }
 
-fn bgra_to_rgba(data: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(data.len());
-    for chunk in data.chunks_exact(4) {
-        output.push(chunk[2]);
-        output.push(chunk[1]);
-        output.push(chunk[0]);
-        output.push(chunk[3]);
+fn bgra_to_rgba(data: &[u8], width: usize, height: usize, stride: usize) -> Vec<u8> {
+    let effective_stride = if stride == 0 { width * 4 } else { stride };
+    let rows_available = data.len().checked_div(effective_stride).unwrap_or(0);
+    let rows = height.min(rows_available);
+    let row_bytes_wanted = width * 4;
+    let mut output = Vec::with_capacity(width * height * 4);
+    for row in 0..rows {
+        let offset = row * effective_stride;
+        let end = offset.saturating_add(row_bytes_wanted).min(data.len());
+        let row_bytes = &data[offset..end];
+        for chunk in row_bytes.chunks_exact(4) {
+            output.push(chunk[2]);
+            output.push(chunk[1]);
+            output.push(chunk[0]);
+            // Force opaque. Windows Media Foundation delivers BGRA with
+            // alpha byte set to 0 (XRGB semantics), which makes the frame
+            // render fully transparent in consumers that respect alpha.
+            output.push(0xFF);
+        }
     }
     output
 }

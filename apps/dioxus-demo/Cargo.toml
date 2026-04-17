@@ -1,0 +1,10 @@
+[package]
+name = "dioxus-demo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+chimeras = { path = "../../crates/chimeras", features = ["rtsp"] }
+dioxus-chimeras = { path = "../../crates/dioxus-chimeras", features = ["rtsp"] }
+dioxus = { version = "0.7", features = ["desktop"] }

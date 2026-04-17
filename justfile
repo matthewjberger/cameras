@@ -1,6 +1,6 @@
 set windows-shell := ["powershell.exe", "-NoProfile", "-Command"]
 
-_dx_version := "0.7.3"
+_dx_version := "0.7.5"
 
 export RUST_LOG := "info"
 
@@ -28,29 +28,85 @@ format-check:
 lint:
   cargo clippy --workspace --all-targets -- -D warnings
 
-# Check just the published library
+# Check just the chimeras core library
 check-lib:
   cargo check -p chimeras --all-targets
 
-# Lint just the published library
+# Lint just the chimeras core library
 lint-lib:
   cargo clippy -p chimeras --all-targets -- -D warnings
 
-# Run the chimeras-demo with hot-reloading
-run: _require-dx
-  dx serve -p chimeras-demo --hotpatch
+# Check dioxus-chimeras (with and without default features)
+check-dx:
+  cargo check -p dioxus-chimeras --all-targets
+  cargo check -p dioxus-chimeras --no-default-features --all-targets
 
-# Run the demo in release mode
-run-release:
-  cargo run -p chimeras-demo --release
+# Lint dioxus-chimeras (with and without default features)
+lint-dx:
+  cargo clippy -p dioxus-chimeras --all-targets -- -D warnings
+  cargo clippy -p dioxus-chimeras --no-default-features --all-targets -- -D warnings
 
-# Enumerate devices and their capabilities
-run-list:
-  cargo run -p chimeras --example list
+# Check egui-chimeras
+check-egui:
+  cargo check -p egui-chimeras --all-targets
 
-# Capture 30 frames from the first camera
-run-capture:
-  cargo run -p chimeras --example capture
+# Lint egui-chimeras (with and without default features)
+lint-egui:
+  cargo clippy -p egui-chimeras --all-targets -- -D warnings
+  cargo clippy -p egui-chimeras --no-default-features --all-targets -- -D warnings
+
+# Build rustdoc for chimeras, failing on broken links.
+# (`--cfg docsrs` is set on the real docs.rs build via [package.metadata.docs.rs];
+# we don't pass it here because `doc(cfg(...))` requires nightly.)
+[unix]
+doc:
+  RUSTDOCFLAGS="-D warnings" cargo doc -p chimeras --no-deps --all-features
+
+[windows]
+doc:
+  $env:RUSTDOCFLAGS = "-D warnings"; cargo doc -p chimeras --no-deps --all-features
+
+# Build rustdoc for dioxus-chimeras, failing on broken links.
+[unix]
+doc-dx:
+  RUSTDOCFLAGS="-D warnings" cargo doc -p dioxus-chimeras --no-deps --all-features
+
+[windows]
+doc-dx:
+  $env:RUSTDOCFLAGS = "-D warnings"; cargo doc -p dioxus-chimeras --no-deps --all-features
+
+# Build rustdoc for egui-chimeras, failing on broken links.
+[unix]
+doc-egui:
+  RUSTDOCFLAGS="-D warnings" cargo doc -p egui-chimeras --no-deps --all-features
+
+[windows]
+doc-egui:
+  $env:RUSTDOCFLAGS = "-D warnings"; cargo doc -p egui-chimeras --no-deps --all-features
+
+# Run the Dioxus demo with hot-reloading
+run-dioxus: _require-dx
+  dx serve -p dioxus-demo --hotpatch
+
+# Run the Dioxus demo in release mode
+run-dioxus-release:
+  cargo run -p dioxus-demo --release
+
+# Run the egui demo
+run-egui:
+  cargo run -p egui-demo --release
+
+# Take a single-frame snapshot from the first camera and write a PNG.
+run-snapshot path="snapshot.png":
+  cargo run -p chimeras --example snapshot -- {{path}}
+
+# Drive a camera with the pump: stream, pause, capture, resume, stop.
+run-pump:
+  cargo run -p chimeras --example pump
+
+# Stream camera hotplug events until Ctrl-C.
+run-monitor:
+  cargo run -p chimeras --example monitor
 
 # Run mediamtx in the foreground to host rtsp://127.0.0.1:8554. Run this
 # in one terminal, then `just rtsp-publish PATH` in another to push an
@@ -70,13 +126,31 @@ rtsp-publish file="test_video.mp4" path="live":
 udeps:
   cargo machete
 
-# Dry-run publish to crates.io
+# Dry-run publish chimeras to crates.io
 publish-dry:
   cargo publish -p chimeras --dry-run
 
 # Publish chimeras to crates.io (requires cargo login)
 publish:
   cargo publish -p chimeras
+
+# Dry-run publish dioxus-chimeras to crates.io
+publish-dry-dx:
+  cargo publish -p dioxus-chimeras --dry-run
+
+# Publish dioxus-chimeras to crates.io. chimeras must already be on crates.io
+# at the version dioxus-chimeras depends on.
+publish-dx:
+  cargo publish -p dioxus-chimeras
+
+# Dry-run publish egui-chimeras to crates.io
+publish-dry-egui:
+  cargo publish -p egui-chimeras --dry-run
+
+# Publish egui-chimeras to crates.io. chimeras must already be on crates.io
+# at the version egui-chimeras depends on.
+publish-egui:
+  cargo publish -p egui-chimeras
 
 # Display toolchain versions
 @versions:

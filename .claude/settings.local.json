@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p C:/Users/matth/code/chimeras/assets)",
+      "Bash(cp C:/Users/matth/.claude/image-cache/5dada462-2eab-4788-939a-a73762b7893d/6.png C:/Users/matth/code/chimeras/assets/chimera.png)"
+    ]
+  }
+}

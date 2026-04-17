@@ -10,7 +10,7 @@ use std::time::Duration;
 
 /// A running device monitor.
 ///
-/// Obtained from [`crate::monitor`]. Owns a polling worker thread that runs until the
+/// Obtained from [`crate::monitor()`]. Owns a polling worker thread that runs until the
 /// monitor is dropped. When dropped, signals the worker to stop and joins it.
 pub struct DeviceMonitor {
     pub(crate) event_rx: Receiver<DeviceEvent>,

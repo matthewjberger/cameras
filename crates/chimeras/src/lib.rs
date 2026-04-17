@@ -48,6 +48,22 @@
 //! Dropping the [`Camera`] stops the stream. Dropping the [`DeviceMonitor`] joins its
 //! polling worker.
 //!
+//! # Higher-level primitives
+//!
+//! Two modules layer on top of the [`Camera`] / [`next_frame`] core. They are optional;
+//! callers who want full control can stick with the core API.
+//!
+//! - [`source`]: a [`CameraSource`] enum that unifies USB and RTSP, plus
+//!   [`open_source`] which dispatches to [`open`] or [`open_rtsp`] automatically.
+//!   Useful for UIs and config files that want a single "where do frames come from"
+//!   value type.
+//! - [`pump`]: a long-running background worker that pulls frames and hands them to a
+//!   caller-provided sink closure. Supports [`pump::set_active`] (pause / resume without
+//!   closing the camera), [`pump::capture_frame`] (single fresh frame on demand, works
+//!   while paused), and [`pump::stop_and_join`] (deterministic teardown). This is the
+//!   primitive higher-level integrations (for example, the `dioxus-chimeras` hook) are
+//!   built on.
+//!
 //! # Design
 //!
 //! - **Data-oriented**: Types hold data. Functions operate on data. No `impl` blocks with
@@ -61,8 +77,13 @@
 //! - **Typed errors**: See [`Error`].
 //! - **Pluggable pixel conversion**: [`to_rgb8`] / [`to_rgba8`] decode from BGRA, RGBA,
 //!   YUYV, NV12, and MJPEG (via `zune-jpeg`), honoring stride.
-//! - **Hotplug**: [`monitor`] returns a [`DeviceMonitor`] that emits
+//! - **Hotplug**: [`monitor()`] returns a [`DeviceMonitor`] that emits
 //!   [`DeviceEvent::Added`] / [`DeviceEvent::Removed`] as cameras appear and disappear.
+//! - **Unified opening**: [`open_source`] + [`CameraSource`] let you treat USB and RTSP
+//!   cameras uniformly in higher-level code.
+//! - **Background pump with pause + capture**: [`pump::spawn`] runs the frame loop off
+//!   the calling thread, with [`pump::set_active`] for pause / resume and
+//!   [`pump::capture_frame`] for single-shot snapshots while paused.
 //! - **Compile-time backend contract**: Platform backends are selected with `cfg`. Each is
 //!   a `Driver` struct that implements [`Backend`]. No `Box<dyn Backend>`; the compiler
 //!   verifies every platform implements the same surface.
@@ -74,6 +95,8 @@ pub mod camera;
 pub mod convert;
 pub mod error;
 pub mod monitor;
+pub mod pump;
+pub mod source;
 pub mod types;
 
 #[cfg(target_os = "macos")]
@@ -105,6 +128,7 @@ pub use camera::{Camera, next_frame, try_next_frame};
 pub use convert::{to_rgb8, to_rgba8};
 pub use error::Error;
 pub use monitor::{DeviceMonitor, next_event, try_next_event};
+pub use source::{CameraSource, open_source, source_label};
 pub use types::{
     Capabilities, Credentials, Device, DeviceEvent, DeviceId, FormatDescriptor, Frame,
     FrameQuality, FramerateRange, PixelFormat, Position, Resolution, StreamConfig, Transport,
