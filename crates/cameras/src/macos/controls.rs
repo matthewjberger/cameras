@@ -4,9 +4,10 @@ use objc2_av_foundation::{
 };
 use objc2_core_media::CMTime;
 
+use crate::controls::{ControlCapabilities, ControlRange, Controls};
 use crate::error::Error;
 use crate::macos::enumerate::find_device;
-use crate::types::{ControlCapabilities, ControlRange, Controls, DeviceId};
+use crate::types::DeviceId;
 
 pub(crate) fn control_capabilities(id: &DeviceId) -> Result<ControlCapabilities, Error> {
     let device = find_device(id)?;

@@ -6,11 +6,11 @@
 //! forces every backend to provide it.
 
 use crate::camera::Camera;
+#[cfg(feature = "controls")]
+use crate::controls::{ControlCapabilities, Controls};
 use crate::error::Error;
 use crate::monitor::DeviceMonitor;
 use crate::types::{Capabilities, Device, DeviceId, StreamConfig};
-#[cfg(feature = "controls")]
-use crate::types::{ControlCapabilities, Controls};
 
 /// The contract every platform backend implements.
 ///

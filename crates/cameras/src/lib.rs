@@ -97,6 +97,8 @@
 pub mod analysis;
 pub mod backend;
 pub mod camera;
+#[cfg(feature = "controls")]
+pub mod controls;
 pub mod convert;
 pub mod error;
 pub mod monitor;
@@ -128,24 +130,24 @@ pub(crate) type ActiveBackend = crate::linux::Driver;
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 pub(crate) type ActiveBackend = crate::unknown::Driver;
 
+#[cfg(feature = "analysis")]
+pub use analysis::Rect;
 pub use backend::Backend;
 #[cfg(feature = "controls")]
 pub use backend::BackendControls;
 pub use camera::{Camera, next_frame, try_next_frame};
+#[cfg(feature = "controls")]
+pub use controls::{
+    ControlCapabilities, ControlKind, ControlRange, Controls, PowerLineFrequency,
+    PowerLineFrequencyCapability, apply_controls, control_capabilities, read_controls,
+};
 pub use convert::{to_rgb8, to_rgba8};
 pub use error::Error;
 pub use monitor::{DeviceMonitor, next_event, try_next_event};
 pub use source::{CameraSource, open_source, source_label};
-#[cfg(feature = "analysis")]
-pub use types::Rect;
 pub use types::{
     Capabilities, Credentials, Device, DeviceEvent, DeviceId, FormatDescriptor, Frame,
     FrameQuality, FramerateRange, PixelFormat, Position, Resolution, StreamConfig, Transport,
-};
-#[cfg(feature = "controls")]
-pub use types::{
-    ControlCapabilities, ControlKind, ControlRange, Controls, PowerLineFrequency,
-    PowerLineFrequencyCapability,
 };
 
 #[cfg(all(feature = "rtsp", any(target_os = "macos", target_os = "windows")))]
@@ -240,31 +242,3 @@ pub fn best_format(capabilities: &Capabilities, config: &StreamConfig) -> Option
 
 /// A reasonable default timeout for [`next_frame`] when you don't want to hand-pick one.
 pub const DEFAULT_FRAME_TIMEOUT: Duration = Duration::from_millis(500);
-
-/// Report which runtime controls the given device exposes and their native ranges.
-///
-/// Fields on the returned [`ControlCapabilities`] are `None` for controls the
-/// platform / device does not expose. Ranges are in each platform's native
-/// unit — do not assume a normalized scale.
-#[cfg(feature = "controls")]
-pub fn control_capabilities(device: &Device) -> Result<ControlCapabilities, Error> {
-    <ActiveBackend as BackendControls>::control_capabilities(&device.id)
-}
-
-/// Read the current value of every exposed control on `device`.
-///
-/// Fields are `None` for controls the device does not expose. Read-back of
-/// `auto_exposure` collapses V4L2 priority modes into `Some(true)`.
-#[cfg(feature = "controls")]
-pub fn read_controls(device: &Device) -> Result<Controls, Error> {
-    <ActiveBackend as BackendControls>::read_controls(&device.id)
-}
-
-/// Apply every [`Some`]-valued field in `controls` to `device`.
-///
-/// `None` fields are left at their current value. Returns the first platform
-/// failure encountered; does not preflight against [`control_capabilities`].
-#[cfg(feature = "controls")]
-pub fn apply_controls(device: &Device, controls: &Controls) -> Result<(), Error> {
-    <ActiveBackend as BackendControls>::apply_controls(&device.id, controls)
-}

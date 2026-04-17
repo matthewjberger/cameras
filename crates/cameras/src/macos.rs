@@ -10,11 +10,11 @@ use crate::backend::Backend;
 #[cfg(feature = "controls")]
 use crate::backend::BackendControls;
 use crate::camera::Camera;
+#[cfg(feature = "controls")]
+use crate::controls::{ControlCapabilities, Controls};
 use crate::error::Error;
 use crate::monitor::DeviceMonitor;
 use crate::types::{Capabilities, Device, DeviceId, StreamConfig};
-#[cfg(feature = "controls")]
-use crate::types::{ControlCapabilities, Controls};
 
 pub use session::SessionHandle;
 

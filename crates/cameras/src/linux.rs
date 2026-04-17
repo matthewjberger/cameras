@@ -2,15 +2,15 @@ use crate::backend::Backend;
 #[cfg(feature = "controls")]
 use crate::backend::BackendControls;
 use crate::camera::Camera;
+#[cfg(feature = "controls")]
+use crate::controls::{
+    ControlCapabilities, ControlRange, Controls, PowerLineFrequency, PowerLineFrequencyCapability,
+};
 use crate::error::Error;
 use crate::monitor::DeviceMonitor;
 use crate::types::{
     Capabilities, Device, DeviceId, FormatDescriptor, Frame, FramerateRange, PixelFormat, Position,
     Resolution, StreamConfig, Transport,
-};
-#[cfg(feature = "controls")]
-use crate::types::{
-    ControlCapabilities, ControlRange, Controls, PowerLineFrequency, PowerLineFrequencyCapability,
 };
 use bytes::Bytes;
 use crossbeam_channel::Sender;
