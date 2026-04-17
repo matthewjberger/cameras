@@ -1,0 +1,37 @@
+[package]
+name = "egui-cameras"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+description = """
+egui / eframe integration for the cameras camera library. Wraps a
+cameras::pump::Pump into an egui TextureHandle so you can render live camera
+frames as an egui::Image with a few lines of glue.
+"""
+documentation = "https://docs.rs/egui-cameras"
+readme = "README.md"
+keywords = ["camera", "egui", "eframe", "video", "texture"]
+categories = ["multimedia::video", "gui"]
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+rtsp = ["cameras/rtsp"]
+
+[dependencies]
+cameras = { version = "0.1", path = "../cameras" }
+egui = "0.32"

@@ -3,10 +3,10 @@ members = ["apps/*", "crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.1.0"
 authors = ["Matthew Berger <matthewjordanberger@gmail.com>"]
 edition = "2024"
 rust-version = "1.85"
-homepage = "https://github.com/matthewjberger/chimeras"
-repository = "https://github.com/matthewjberger/chimeras"
+homepage = "https://github.com/matthewjberger/cameras"
+repository = "https://github.com/matthewjberger/cameras"
 license = "MIT OR Apache-2.0"

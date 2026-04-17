@@ -1,6 +1,6 @@
-use chimeras::{CameraSource, Credentials, Device, PixelFormat, Resolution, StreamConfig};
+use cameras::{CameraSource, Credentials, Device, PixelFormat, Resolution, StreamConfig};
 use eframe::egui;
-use egui_chimeras::{capture_frame, set_active};
+use egui_cameras::{capture_frame, set_active};
 use image::{ExtendedColorType, ImageEncoder, codecs::png::PngEncoder};
 
 const STREAM_CONFIG: StreamConfig = StreamConfig {
@@ -18,7 +18,7 @@ fn main() -> Result<(), eframe::Error> {
         ..Default::default()
     };
     eframe::run_native(
-        "chimeras egui demo",
+        "cameras egui demo",
         options,
         Box::new(|_cc| Ok(Box::new(App::new()))),
     )
@@ -38,7 +38,7 @@ struct App {
     rtsp_username: String,
     rtsp_password: String,
 
-    stream: Option<egui_chimeras::Stream>,
+    stream: Option<egui_cameras::Stream>,
     active: bool,
     status: String,
     last_capture: Option<String>,
@@ -46,7 +46,7 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        let devices = chimeras::devices().unwrap_or_default();
+        let devices = cameras::devices().unwrap_or_default();
         Self {
             devices,
             selected_device: 0,
@@ -83,9 +83,9 @@ impl App {
             return;
         };
         self.status = format!("Connecting to {}...", source_label(&source));
-        match chimeras::open_source(source.clone(), STREAM_CONFIG) {
+        match cameras::open_source(source.clone(), STREAM_CONFIG) {
             Ok(camera) => {
-                self.stream = Some(egui_chimeras::spawn(camera));
+                self.stream = Some(egui_cameras::spawn(camera));
                 self.active = true;
                 self.status = format!("Streaming: {}", source_label(&source));
             }
@@ -102,7 +102,7 @@ impl App {
     }
 
     fn refresh_devices(&mut self) {
-        self.devices = chimeras::devices().unwrap_or_default();
+        self.devices = cameras::devices().unwrap_or_default();
         if self.selected_device >= self.devices.len() {
             self.selected_device = 0;
         }
@@ -127,14 +127,14 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if let Some(stream) = &mut self.stream
-            && let Err(error) = egui_chimeras::update_texture(stream, ctx)
+            && let Err(error) = egui_cameras::update_texture(stream, ctx)
         {
             self.status = format!("Texture upload failed: {error}");
         }
 
         egui::TopBottomPanel::top("bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("chimeras egui demo");
+                ui.heading("cameras egui demo");
                 ui.separator();
                 ui.selectable_value(&mut self.source_mode, SourceMode::Usb, "USB");
                 ui.selectable_value(&mut self.source_mode, SourceMode::Rtsp, "RTSP");
@@ -218,7 +218,7 @@ impl eframe::App for App {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(stream) = &self.stream {
-                egui_chimeras::show(stream, ui);
+                egui_cameras::show(stream, ui);
             } else {
                 ui.centered_and_justified(|ui| {
                     ui.label("Pick a source, configure it, and press Connect.");
@@ -257,8 +257,8 @@ fn source_label(source: &CameraSource) -> String {
     }
 }
 
-fn save_png(frame: &chimeras::Frame, path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let rgba = chimeras::to_rgba8(frame)?;
+fn save_png(frame: &cameras::Frame, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let rgba = cameras::to_rgba8(frame)?;
     let file = std::fs::File::create(path)?;
     let encoder = PngEncoder::new(std::io::BufWriter::new(file));
     encoder.write_image(&rgba, frame.width, frame.height, ExtendedColorType::Rgba8)?;

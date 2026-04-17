@@ -1,6 +1,6 @@
-use chimeras::{CameraSource, Credentials, PixelFormat, Resolution, StreamConfig};
+use cameras::{CameraSource, Credentials, PixelFormat, Resolution, StreamConfig};
 use dioxus::prelude::*;
-use dioxus_chimeras::{
+use dioxus_cameras::{
     PreviewScript, StreamPreview, StreamStatus, UseDevices, UseStreams, register_with,
     start_preview_server, use_camera_stream, use_devices, use_streams,
 };
@@ -22,7 +22,7 @@ fn main() {
     let launch = dioxus::LaunchBuilder::desktop().with_cfg(
         dioxus::desktop::Config::new().with_menu(None).with_window(
             dioxus::desktop::WindowBuilder::new()
-                .with_title("chimeras demo")
+                .with_title("cameras demo")
                 .with_inner_size(dioxus::desktop::LogicalSize::new(1400.0, 900.0)),
         ),
     );
@@ -46,7 +46,7 @@ fn App() -> Element {
         style { {APP_CSS} }
         div { class: "app",
             header { class: "title-bar",
-                h1 { "chimeras" }
+                h1 { "cameras" }
                 span { class: "subtitle", "cross-platform camera demo" }
                 button {
                     class: "btn btn-ghost",

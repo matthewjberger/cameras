@@ -1,0 +1,41 @@
+[package]
+name = "dioxus-cameras"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+description = """
+Dioxus integration for the cameras camera library. Provides a preview server,
+frame registry, camera pump, a use_camera_stream hook, and a StreamPreview
+component for rendering live cameras frames inside a Dioxus desktop app via
+WebGL2.
+"""
+documentation = "https://docs.rs/dioxus-cameras"
+readme = "README.md"
+keywords = ["camera", "dioxus", "video", "webgl", "preview"]
+categories = ["multimedia::video", "gui"]
+include = [
+    "src/**/*.rs",
+    "assets/**/*.js",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+rtsp = ["cameras/rtsp"]
+
+[dependencies]
+bytes = "1"
+cameras = { version = "0.1", path = "../cameras" }
+dioxus = { version = "0.7", features = ["desktop"] }
+futures-timer = "3"

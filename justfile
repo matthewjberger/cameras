@@ -28,61 +28,61 @@ format-check:
 lint:
   cargo clippy --workspace --all-targets -- -D warnings
 
-# Check just the chimeras core library
+# Check just the cameras core library
 check-lib:
-  cargo check -p chimeras --all-targets
+  cargo check -p cameras --all-targets
 
-# Lint just the chimeras core library
+# Lint just the cameras core library
 lint-lib:
-  cargo clippy -p chimeras --all-targets -- -D warnings
+  cargo clippy -p cameras --all-targets -- -D warnings
 
-# Check dioxus-chimeras (with and without default features)
+# Check dioxus-cameras (with and without default features)
 check-dx:
-  cargo check -p dioxus-chimeras --all-targets
-  cargo check -p dioxus-chimeras --no-default-features --all-targets
+  cargo check -p dioxus-cameras --all-targets
+  cargo check -p dioxus-cameras --no-default-features --all-targets
 
-# Lint dioxus-chimeras (with and without default features)
+# Lint dioxus-cameras (with and without default features)
 lint-dx:
-  cargo clippy -p dioxus-chimeras --all-targets -- -D warnings
-  cargo clippy -p dioxus-chimeras --no-default-features --all-targets -- -D warnings
+  cargo clippy -p dioxus-cameras --all-targets -- -D warnings
+  cargo clippy -p dioxus-cameras --no-default-features --all-targets -- -D warnings
 
-# Check egui-chimeras
+# Check egui-cameras
 check-egui:
-  cargo check -p egui-chimeras --all-targets
+  cargo check -p egui-cameras --all-targets
 
-# Lint egui-chimeras (with and without default features)
+# Lint egui-cameras (with and without default features)
 lint-egui:
-  cargo clippy -p egui-chimeras --all-targets -- -D warnings
-  cargo clippy -p egui-chimeras --no-default-features --all-targets -- -D warnings
+  cargo clippy -p egui-cameras --all-targets -- -D warnings
+  cargo clippy -p egui-cameras --no-default-features --all-targets -- -D warnings
 
-# Build rustdoc for chimeras, failing on broken links.
+# Build rustdoc for cameras, failing on broken links.
 # (`--cfg docsrs` is set on the real docs.rs build via [package.metadata.docs.rs];
 # we don't pass it here because `doc(cfg(...))` requires nightly.)
 [unix]
 doc:
-  RUSTDOCFLAGS="-D warnings" cargo doc -p chimeras --no-deps --all-features
+  RUSTDOCFLAGS="-D warnings" cargo doc -p cameras --no-deps --all-features
 
 [windows]
 doc:
-  $env:RUSTDOCFLAGS = "-D warnings"; cargo doc -p chimeras --no-deps --all-features
+  $env:RUSTDOCFLAGS = "-D warnings"; cargo doc -p cameras --no-deps --all-features
 
-# Build rustdoc for dioxus-chimeras, failing on broken links.
+# Build rustdoc for dioxus-cameras, failing on broken links.
 [unix]
 doc-dx:
-  RUSTDOCFLAGS="-D warnings" cargo doc -p dioxus-chimeras --no-deps --all-features
+  RUSTDOCFLAGS="-D warnings" cargo doc -p dioxus-cameras --no-deps --all-features
 
 [windows]
 doc-dx:
-  $env:RUSTDOCFLAGS = "-D warnings"; cargo doc -p dioxus-chimeras --no-deps --all-features
+  $env:RUSTDOCFLAGS = "-D warnings"; cargo doc -p dioxus-cameras --no-deps --all-features
 
-# Build rustdoc for egui-chimeras, failing on broken links.
+# Build rustdoc for egui-cameras, failing on broken links.
 [unix]
 doc-egui:
-  RUSTDOCFLAGS="-D warnings" cargo doc -p egui-chimeras --no-deps --all-features
+  RUSTDOCFLAGS="-D warnings" cargo doc -p egui-cameras --no-deps --all-features
 
 [windows]
 doc-egui:
-  $env:RUSTDOCFLAGS = "-D warnings"; cargo doc -p egui-chimeras --no-deps --all-features
+  $env:RUSTDOCFLAGS = "-D warnings"; cargo doc -p egui-cameras --no-deps --all-features
 
 # Run the Dioxus demo with hot-reloading
 run-dioxus: _require-dx
@@ -98,15 +98,15 @@ run-egui:
 
 # Take a single-frame snapshot from the first camera and write a PNG.
 run-snapshot path="snapshot.png":
-  cargo run -p chimeras --example snapshot -- {{path}}
+  cargo run -p cameras --example snapshot -- {{path}}
 
 # Drive a camera with the pump: stream, pause, capture, resume, stop.
 run-pump:
-  cargo run -p chimeras --example pump
+  cargo run -p cameras --example pump
 
 # Stream camera hotplug events until Ctrl-C.
 run-monitor:
-  cargo run -p chimeras --example monitor
+  cargo run -p cameras --example monitor
 
 # Run mediamtx in the foreground to host rtsp://127.0.0.1:8554. Run this
 # in one terminal, then `just rtsp-publish PATH` in another to push an
@@ -126,31 +126,31 @@ rtsp-publish file="test_video.mp4" path="live":
 udeps:
   cargo machete
 
-# Dry-run publish chimeras to crates.io
+# Dry-run publish cameras to crates.io
 publish-dry:
-  cargo publish -p chimeras --dry-run
+  cargo publish -p cameras --dry-run
 
-# Publish chimeras to crates.io (requires cargo login)
+# Publish cameras to crates.io (requires cargo login)
 publish:
-  cargo publish -p chimeras
+  cargo publish -p cameras
 
-# Dry-run publish dioxus-chimeras to crates.io
+# Dry-run publish dioxus-cameras to crates.io
 publish-dry-dx:
-  cargo publish -p dioxus-chimeras --dry-run
+  cargo publish -p dioxus-cameras --dry-run
 
-# Publish dioxus-chimeras to crates.io. chimeras must already be on crates.io
-# at the version dioxus-chimeras depends on.
+# Publish dioxus-cameras to crates.io. cameras must already be on crates.io
+# at the version dioxus-cameras depends on.
 publish-dx:
-  cargo publish -p dioxus-chimeras
+  cargo publish -p dioxus-cameras
 
-# Dry-run publish egui-chimeras to crates.io
+# Dry-run publish egui-cameras to crates.io
 publish-dry-egui:
-  cargo publish -p egui-chimeras --dry-run
+  cargo publish -p egui-cameras --dry-run
 
-# Publish egui-chimeras to crates.io. chimeras must already be on crates.io
-# at the version egui-chimeras depends on.
+# Publish egui-cameras to crates.io. cameras must already be on crates.io
+# at the version egui-cameras depends on.
 publish-egui:
-  cargo publish -p egui-chimeras
+  cargo publish -p egui-cameras
 
 # Display toolchain versions
 @versions:

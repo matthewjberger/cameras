@@ -1,0 +1,80 @@
+[package]
+name = "cameras"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+description = """
+A cross-platform camera library for Rust, built with data-oriented design.
+Explicit format negotiation, push-based frame delivery, typed errors, and zero
+trait objects.
+"""
+documentation = "https://docs.rs/cameras"
+readme = "README.md"
+keywords = ["camera", "webcam", "video", "capture", "mjpeg"]
+categories = ["multimedia::video", "hardware-support", "api-bindings"]
+include = [
+    "src/**/*.rs",
+    "examples/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+rtsp = ["dep:retina", "dep:tokio", "dep:url", "dep:futures-util"]
+
+[dependencies]
+bytes = "1"
+crossbeam-channel = "0.5"
+thiserror = "2"
+zune-jpeg = "0.4"
+
+retina = { version = "0.4", optional = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net"], optional = true }
+url = { version = "2", optional = true }
+futures-util = { version = "0.3", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", features = ["exception"] }
+objc2-foundation = "0.3"
+objc2-av-foundation = { version = "0.3", features = ["objc2-core-media"] }
+objc2-core-media = "0.3"
+objc2-core-foundation = "0.3"
+objc2-core-video = "0.3"
+objc2-video-toolbox = { version = "0.3", features = ["objc2-core-media", "objc2-core-video"] }
+dispatch2 = "0.3"
+block2 = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_Devices_Properties",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+v4l = "0.14"
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[[example]]
+name = "snapshot"
+
+[[example]]
+name = "pump"
+
+[[example]]
+name = "monitor"

@@ -5,8 +5,8 @@ edition = "2024"
 publish = false
 
 [dependencies]
-chimeras = { path = "../../crates/chimeras", features = ["rtsp"] }
-egui-chimeras = { path = "../../crates/egui-chimeras", features = ["rtsp"] }
+cameras = { path = "../../crates/cameras", features = ["rtsp"] }
+egui-cameras = { path = "../../crates/egui-cameras", features = ["rtsp"] }
 eframe = { version = "0.32", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 egui = "0.32"
 image = { version = "0.25", default-features = false, features = ["png"] }

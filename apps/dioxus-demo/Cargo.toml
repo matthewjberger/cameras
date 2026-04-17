@@ -5,6 +5,6 @@ edition = "2024"
 publish = false
 
 [dependencies]
-chimeras = { path = "../../crates/chimeras", features = ["rtsp"] }
-dioxus-chimeras = { path = "../../crates/dioxus-chimeras", features = ["rtsp"] }
+cameras = { path = "../../crates/cameras", features = ["rtsp"] }
+dioxus-cameras = { path = "../../crates/dioxus-cameras", features = ["rtsp"] }
 dioxus = { version = "0.7", features = ["desktop"] }
