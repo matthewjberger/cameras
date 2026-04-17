@@ -120,9 +120,9 @@ void main() {
                 const view = new DataView(buffer);
                 if (
                     view.getUint8(0) !== 0x43 ||
-                    view.getUint8(1) !== 0x48 ||
-                    view.getUint8(2) !== 0x49 ||
-                    view.getUint8(3) !== 0x4d
+                    view.getUint8(1) !== 0x41 ||
+                    view.getUint8(2) !== 0x4d ||
+                    view.getUint8(3) !== 0x53
                 ) {
                     return;
                 }

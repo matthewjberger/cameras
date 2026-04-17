@@ -17,7 +17,7 @@ use crate::component::PreviewPort;
 use crate::poison::recover_lock;
 use crate::registry::{FrameSource, Registry};
 
-const PREVIEW_MAGIC: [u8; 4] = *b"CHIM";
+const PREVIEW_MAGIC: [u8; 4] = *b"CAMS";
 const PREVIEW_VERSION: u8 = 1;
 const PREVIEW_FORMAT_NONE: u8 = 0;
 const PREVIEW_FORMAT_NV12: u8 = 1;
