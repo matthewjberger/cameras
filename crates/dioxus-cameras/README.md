@@ -13,9 +13,9 @@
   <code>cargo add dioxus-cameras</code>
 </p>
 
-`dioxus-cameras` is the Dioxus integration for the [`cameras`](../) cross-platform camera library. It owns the glue between a `cameras::Camera` and a `<canvas>` element: a loopback HTTP preview server, a WebGL2 renderer, a `Registry` that shares frames between the camera pump and the webview, and a handful of hooks that expose the stream lifecycle as Dioxus signals.
+`dioxus-cameras` is the Dioxus integration for [`cameras`](https://crates.io/crates/cameras), a cross-platform camera library for Rust. It owns the glue between a `cameras::Camera` and a `<canvas>` element: a loopback HTTP preview server, a WebGL2 renderer, a `Registry` that shares frames between the camera pump and the webview, and a handful of hooks that expose the stream lifecycle as Dioxus signals.
 
-Every generic primitive (pause/resume pump, single-frame capture, unified `CameraSource`) lives upstream in `cameras` itself so non-Dioxus callers can use it too.
+Every generic primitive (pause/resume pump, single-frame capture, unified `CameraSource`) lives upstream in `cameras` itself and is re-exported as `dioxus_cameras::cameras`, so non-Dioxus callers can use those primitives directly and Dioxus callers only need a single dependency.
 
 ## Quick Start
 
@@ -23,13 +23,10 @@ Every generic primitive (pause/resume pump, single-frame capture, unified `Camer
 [dependencies]
 dioxus = { version = "0.7", features = ["desktop"] }
 dioxus-cameras = "0.1"
-cameras = "0.1"
 ```
 
-`dioxus-cameras` and `cameras` ship in lockstep: both crates share the same major + minor version (`0.1.x`). Use matching versions in your `Cargo.toml`.
-
 ```rust
-use cameras::{CameraSource, PixelFormat, Resolution, StreamConfig};
+use dioxus_cameras::cameras::{self, CameraSource, PixelFormat, Resolution, StreamConfig};
 use dioxus::prelude::*;
 use dioxus_cameras::{
     PreviewScript, StreamPreview, register_with, start_preview_server, use_camera_stream,
@@ -120,7 +117,7 @@ stream.active.clone().set(true);
 
 ## Versioning
 
-`dioxus-cameras` is released in lockstep with `cameras`: both crates share the same major + minor version (for example, `cameras 0.1.x` pairs with `dioxus-cameras 0.1.x`). Patch numbers can drift between the two; every `0.1.x` of dioxus-cameras will work with any `0.1.y` of cameras.
+`dioxus-cameras` pins a specific minor version of `cameras` via `pub use cameras;`, so installing `dioxus-cameras = "0.1"` gives you a compatible `cameras` automatically.
 
 ## Features
 
@@ -139,14 +136,9 @@ The crate deliberately splits responsibilities:
 
 If you're integrating cameras into a non-Dioxus app (a CLI, a Tauri shell, a custom renderer), you do not need this crate. Use `cameras::pump` directly for the pause + snapshot pattern.
 
-## Demo
+## Example
 
-The [`demo/`](../demo/) app in the parent repo exercises the full API: multi-stream grid, per-cell USB or RTSP source, live-preview toggle, take-picture button, add/remove streams, device refresh.
-
-```bash
-just run           # hot-reloading dev build
-just run-release   # release build
-```
+A runnable example lives at [`apps/dioxus-demo`](https://github.com/matthewjberger/cameras/tree/main/apps/dioxus-demo) in the repository: multi-stream grid, per-cell USB or RTSP source, live-preview toggle, take-picture button, add/remove streams, device refresh.
 
 ## Dependency surface
 

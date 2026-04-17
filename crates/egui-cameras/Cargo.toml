@@ -8,7 +8,7 @@ homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 description = """
-egui / eframe integration for the cameras camera library. Wraps a
+egui / eframe integration for the cameras crate. Wraps a
 cameras::pump::Pump into an egui TextureHandle so you can render live camera
 frames as an egui::Image with a few lines of glue.
 """

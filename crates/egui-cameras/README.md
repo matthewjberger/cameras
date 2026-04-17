@@ -13,21 +13,20 @@
   <code>cargo add egui-cameras</code>
 </p>
 
-`egui-cameras` is the egui integration for the [`cameras`](../cameras/) cross-platform camera library. It owns the thin glue between a running `cameras::pump::Pump` and an `egui::TextureHandle`, so you can render live camera frames as an `egui::Image` with a few lines of code.
+`egui-cameras` is the egui integration for [`cameras`](https://crates.io/crates/cameras), a cross-platform camera library for Rust. It owns the thin glue between a running `cameras::pump::Pump` and an `egui::TextureHandle`, so you can render live camera frames as an `egui::Image` with a few lines of code.
 
-Every camera-side primitive (pause / resume pump, single-frame capture, unified `CameraSource`, hotplug monitor) lives upstream in `cameras` itself and is re-exported from this crate for convenience.
+Every camera-side primitive (pause / resume pump, single-frame capture, unified `CameraSource`, hotplug monitor) lives upstream in `cameras` itself and is re-exported from this crate as `egui_cameras::cameras`, so a single dependency is enough.
 
 ## Quick Start
 
 ```toml
 [dependencies]
-cameras = "0.1"
 egui-cameras = "0.1"
 eframe = "0.32"
 ```
 
 ```rust
-use cameras::{PixelFormat, Resolution, StreamConfig};
+use egui_cameras::cameras::{self, PixelFormat, Resolution, StreamConfig};
 use eframe::egui;
 
 struct App {
@@ -78,18 +77,16 @@ Pump controls (`set_active`, `capture_frame`, `stop_and_join`) are re-exported d
 
 ## Pause + snapshot
 
-The same pattern as dioxus-cameras: pause the pump when the user isn't looking, grab fresh frames on demand without closing the camera.
+Pause the pump when the user isn't looking, grab fresh frames on demand without closing the camera.
 
 ```rust
 use egui_cameras::{capture_frame, set_active};
 
-# fn example(stream: &egui_cameras::Stream) -> Option<cameras::Frame> {
 // Park the pump (no per-frame Rust work; camera stays open):
 set_active(&stream.pump, false);
 
 // Grab a fresh snapshot regardless of pause state:
-capture_frame(&stream.pump)
-# }
+let frame = capture_frame(&stream.pump);
 ```
 
 ## Features
@@ -100,15 +97,11 @@ capture_frame(&stream.pump)
 
 ## Versioning
 
-`egui-cameras` ships in lockstep with `cameras` and `dioxus-cameras`. All three crates share the same major + minor version (`0.1.x`). Match your `Cargo.toml` versions accordingly.
+`egui-cameras` pins a specific minor version of `cameras` via `pub use cameras;`, so installing `egui-cameras = "0.1"` gives you a compatible `cameras` automatically.
 
-## Demo
+## Example
 
-The [`egui-demo`](../../apps/egui-demo/) app in the parent repo exercises the full API: live preview, pause toggle, take-picture button.
-
-```bash
-just run-egui
-```
+A runnable example lives at [`apps/egui-demo`](https://github.com/matthewjberger/cameras/tree/main/apps/egui-demo) in the repository: live preview, pause toggle, take-picture button.
 
 ## License
 

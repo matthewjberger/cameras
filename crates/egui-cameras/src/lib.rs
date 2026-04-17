@@ -1,4 +1,4 @@
-//! egui / eframe integration for the [`cameras`] camera library.
+//! egui / eframe integration for the [`cameras`] crate.
 //!
 //! This crate owns only the thin glue between a running
 //! [`cameras::pump::Pump`] and an [`egui::TextureHandle`]. Every camera
@@ -9,7 +9,7 @@
 //! # Wiring an eframe app
 //!
 //! ```ignore
-//! use cameras::{PixelFormat, Resolution, StreamConfig};
+//! use egui_cameras::cameras::{self, PixelFormat, Resolution, StreamConfig};
 //! use eframe::egui;
 //!
 //! struct App {
@@ -32,6 +32,8 @@
 //! runnable version.
 
 #![warn(missing_docs)]
+
+pub use cameras;
 
 use std::sync::{Arc, Mutex, PoisonError};
 

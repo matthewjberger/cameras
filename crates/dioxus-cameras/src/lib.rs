@@ -1,4 +1,4 @@
-//! Dioxus integration for the [`cameras`] camera library.
+//! Dioxus integration for the [`cameras`] crate.
 //!
 //! This crate owns only the Dioxus-specific glue, the HTTP preview server,
 //! the [`Registry`] backing it, the `<canvas>`-side WebGL2 renderer, and the
@@ -26,7 +26,7 @@
 //! # Wiring a Dioxus app
 //!
 //! ```no_run
-//! use cameras::{CameraSource, PixelFormat, Resolution, StreamConfig};
+//! use dioxus_cameras::cameras::{self, CameraSource, PixelFormat, Resolution, StreamConfig};
 //! use dioxus::prelude::*;
 //! use dioxus_cameras::{PreviewScript, StreamPreview, register_with, start_preview_server, use_camera_stream};
 //!
@@ -60,6 +60,8 @@
 //! ```
 
 #![warn(missing_docs)]
+
+pub use cameras;
 
 mod camera_stream;
 mod channel;

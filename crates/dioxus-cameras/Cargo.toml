@@ -8,10 +8,9 @@ homepage.workspace = true
 repository.workspace = true
 license.workspace = true
 description = """
-Dioxus integration for the cameras camera library. Provides a preview server,
-frame registry, camera pump, a use_camera_stream hook, and a StreamPreview
-component for rendering live cameras frames inside a Dioxus desktop app via
-WebGL2.
+Dioxus integration for the cameras crate. Provides a preview server, frame
+registry, camera pump, a use_camera_stream hook, and a StreamPreview component
+for rendering live camera frames inside a Dioxus desktop app via WebGL2.
 """
 documentation = "https://docs.rs/dioxus-cameras"
 readme = "README.md"

@@ -152,6 +152,13 @@ publish-dry-egui:
 publish-egui:
   cargo publish -p egui-cameras
 
+# Publish all three crates in dependency order: cameras, then both integrations.
+# cargo publish waits for the index to update before returning, so no sleep needed.
+publish-all:
+  just publish
+  just publish-dx
+  just publish-egui
+
 # Display toolchain versions
 @versions:
   rustc --version
