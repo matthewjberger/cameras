@@ -7,6 +7,7 @@ use thiserror::Error;
 /// Matches on shape, not string text. Each variant carries the context needed to
 /// diagnose the failure without having to parse a message.
 #[derive(Clone, Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     /// The user or OS denied access to camera hardware.
     #[error("camera permission denied")]

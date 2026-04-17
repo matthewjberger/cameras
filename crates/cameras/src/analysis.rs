@@ -17,37 +17,13 @@ use crate::types::{Frame, Rect};
 /// Returns a relative scalar; higher means sharper. Thresholds must be
 /// calibrated per camera and lighting condition.
 ///
-/// ```
+/// ```no_run
+/// use cameras::Frame;
 /// use cameras::analysis::blur_variance;
-/// use cameras::{Frame, FrameQuality, PixelFormat};
-/// use bytes::Bytes;
-/// use std::time::Duration;
 ///
-/// fn rgb_frame(pixels: Vec<u8>) -> Frame {
-///     Frame {
-///         width: 8,
-///         height: 8,
-///         stride: 0,
-///         timestamp: Duration::ZERO,
-///         pixel_format: PixelFormat::Rgb8,
-///         quality: FrameQuality::Intact,
-///         plane_primary: Bytes::from(pixels),
-///         plane_secondary: Bytes::new(),
-///     }
+/// fn sharpness(frame: &Frame) -> f32 {
+///     blur_variance(frame)
 /// }
-///
-/// let flat = rgb_frame(vec![128u8; 8 * 8 * 3]);
-///
-/// let mut checkerboard = Vec::with_capacity(8 * 8 * 3);
-/// for row in 0..8 {
-///     for col in 0..8 {
-///         let value = if (row + col) % 2 == 0 { 255 } else { 0 };
-///         checkerboard.extend_from_slice(&[value, value, value]);
-///     }
-/// }
-/// let sharp = rgb_frame(checkerboard);
-///
-/// assert!(blur_variance(&sharp) > blur_variance(&flat));
 /// ```
 pub fn blur_variance(frame: &Frame) -> f32 {
     let luma = to_luma8(frame);

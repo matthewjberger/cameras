@@ -12,6 +12,7 @@ pub struct DeviceId(pub String);
 
 /// Logical mounting position of a camera on the host device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Position {
     /// Position is not known.
     Unspecified,
@@ -25,6 +26,7 @@ pub enum Position {
 
 /// Physical transport the camera uses to reach the host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Transport {
     /// Integrated into the host hardware (e.g. laptop FaceTime camera).
     BuiltIn,
@@ -54,6 +56,7 @@ pub struct Credentials {
 ///
 /// All fields are public plain data; copy and mutate as you like.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Device {
     /// Platform-unique identifier. Pass this back to open or probe the device.
     pub id: DeviceId,
@@ -76,6 +79,7 @@ pub struct Resolution {
 
 /// Concrete pixel layouts that [`Frame::plane_primary`] / `plane_secondary` may carry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum PixelFormat {
     /// 32-bit BGRA, one plane, alpha ignored for 24-bit conversions.
     Bgra8,
@@ -93,6 +97,7 @@ pub enum PixelFormat {
 
 /// A closed range of framerates a device format can produce, in frames per second.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct FramerateRange {
     /// Lowest framerate the device will produce in this mode.
     pub min: f64,
@@ -104,6 +109,7 @@ pub struct FramerateRange {
 ///
 /// Returned inside [`Capabilities`] from [`crate::probe`].
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct FormatDescriptor {
     /// Resolution this entry describes.
     pub resolution: Resolution,
@@ -115,6 +121,7 @@ pub struct FormatDescriptor {
 
 /// Full list of formats a device supports, as reported by [`crate::probe`].
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Capabilities {
     /// One entry per supported `(resolution, framerate_range, pixel_format)` tuple.
     pub formats: Vec<FormatDescriptor>,
@@ -140,6 +147,7 @@ pub struct StreamConfig {
 /// past data, smearing macroblocks until the next keyframe. USB backends always return
 /// [`FrameQuality::Intact`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum FrameQuality {
     /// Pixel data is complete and trustworthy.
     Intact,
@@ -157,6 +165,7 @@ pub enum FrameQuality {
 /// `plane_secondary` holds the interleaved UV plane. Single-plane formats leave
 /// `plane_secondary` empty.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Frame {
     /// Frame width in pixels.
     pub width: u32,
@@ -195,6 +204,7 @@ pub struct Rect {
 
 /// Events emitted by the hotplug [`crate::DeviceMonitor`].
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum DeviceEvent {
     /// A new device was discovered (or was present when the monitor started).
     Added(Device),

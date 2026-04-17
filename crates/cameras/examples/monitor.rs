@@ -22,6 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         match cameras::next_event(&monitor, Duration::from_secs(1)) {
             Ok(DeviceEvent::Added(device)) => println!("+ {} ({})", device.name, device.id.0),
             Ok(DeviceEvent::Removed(id)) => println!("- {}", id.0),
+            Ok(_) => continue,
             Err(CamerasError::Timeout) => continue,
             Err(err) => return Err(err.into()),
         }
