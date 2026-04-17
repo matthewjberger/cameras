@@ -1,3 +1,5 @@
+#[cfg(feature = "controls")]
+mod controls;
 mod delegate;
 mod enumerate;
 mod monitor;
@@ -40,24 +42,15 @@ impl Backend for Driver {
 
 #[cfg(feature = "controls")]
 impl BackendControls for Driver {
-    fn control_capabilities(_id: &DeviceId) -> Result<ControlCapabilities, Error> {
-        Err(Error::Unsupported {
-            platform: "macos",
-            reason: "controls not yet implemented",
-        })
+    fn control_capabilities(id: &DeviceId) -> Result<ControlCapabilities, Error> {
+        controls::control_capabilities(id)
     }
 
-    fn read_controls(_id: &DeviceId) -> Result<Controls, Error> {
-        Err(Error::Unsupported {
-            platform: "macos",
-            reason: "controls not yet implemented",
-        })
+    fn read_controls(id: &DeviceId) -> Result<Controls, Error> {
+        controls::read_controls(id)
     }
 
-    fn apply_controls(_id: &DeviceId, _controls: &Controls) -> Result<(), Error> {
-        Err(Error::Unsupported {
-            platform: "macos",
-            reason: "controls not yet implemented",
-        })
+    fn apply_controls(id: &DeviceId, controls_request: &Controls) -> Result<(), Error> {
+        controls::apply_controls(id, controls_request)
     }
 }

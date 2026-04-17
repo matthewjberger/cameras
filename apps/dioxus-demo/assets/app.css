@@ -401,3 +401,165 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+
+.capabilities-details {
+    background: var(--base-8);
+    border: 1px solid var(--base-20);
+    border-radius: 6px;
+    padding: 0;
+}
+
+.capabilities-details[open] {
+    padding-bottom: 8px;
+}
+
+.capabilities-summary {
+    cursor: pointer;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    color: var(--base-70);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    user-select: none;
+}
+
+.capabilities-summary:hover {
+    color: var(--leche-dim);
+}
+
+.capabilities-details[open] .capabilities-summary {
+    border-bottom: 1px solid var(--base-20);
+    margin-bottom: 8px;
+}
+
+.stream-cell-capabilities {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0 12px;
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.capability-row {
+    display: grid;
+    grid-template-columns: 20px 180px 1fr;
+    gap: 10px;
+    align-items: baseline;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.capability-mark {
+    text-align: center;
+    font-weight: 700;
+}
+
+.capability-mark.supported {
+    color: var(--mint);
+}
+
+.capability-mark.unsupported {
+    color: var(--error);
+}
+
+.capability-name {
+    color: var(--leche-dim);
+}
+
+.capability-detail {
+    color: var(--base-70);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.capability-error {
+    color: var(--error);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 12px;
+}
+
+.stream-cell-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--base-8);
+    border: 1px solid var(--base-20);
+    border-radius: 6px;
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.control-row {
+    display: grid;
+    grid-template-columns: 150px 1fr 90px;
+    gap: 10px;
+    align-items: center;
+    font-size: 12px;
+}
+
+.control-label {
+    color: var(--leche-dim);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+}
+
+.control-slider {
+    width: 100%;
+    accent-color: var(--mint);
+}
+
+.control-value {
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    color: var(--base-70);
+    text-align: right;
+}
+
+.control-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.control-toggle input[type="checkbox"] {
+    accent-color: var(--mint);
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+.control-toggle input[type="checkbox"]:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.control-slider:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.control-tri-state {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.control-tri-option {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--leche-dim);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.control-tri-option input[type="radio"] {
+    accent-color: var(--mint);
+    width: 12px;
+    height: 12px;
+    cursor: pointer;
+}

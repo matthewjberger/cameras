@@ -9,7 +9,9 @@ use crate::types::{
     Resolution, StreamConfig, Transport,
 };
 #[cfg(feature = "controls")]
-use crate::types::{ControlCapabilities, Controls};
+use crate::types::{
+    ControlCapabilities, ControlRange, Controls, PowerLineFrequency, PowerLineFrequencyCapability,
+};
 use bytes::Bytes;
 use crossbeam_channel::Sender;
 use std::collections::HashMap;
@@ -338,24 +340,331 @@ fn map_io_error(error: io::Error) -> Error {
 
 #[cfg(feature = "controls")]
 impl BackendControls for Driver {
-    fn control_capabilities(_id: &DeviceId) -> Result<ControlCapabilities, Error> {
-        Err(Error::Unsupported {
-            platform: "linux",
-            reason: "controls not yet implemented",
-        })
+    fn control_capabilities(id: &DeviceId) -> Result<ControlCapabilities, Error> {
+        let device = V4lDevice::with_path(&id.0).map_err(map_io_error)?;
+        let descriptions = device.query_controls().map_err(map_io_error)?;
+        let mut caps = ControlCapabilities::default();
+        for description in descriptions.iter() {
+            if description_is_unavailable(description) {
+                continue;
+            }
+            populate_capability(&mut caps, description);
+        }
+        Ok(caps)
     }
 
-    fn read_controls(_id: &DeviceId) -> Result<Controls, Error> {
-        Err(Error::Unsupported {
-            platform: "linux",
-            reason: "controls not yet implemented",
-        })
+    fn read_controls(id: &DeviceId) -> Result<Controls, Error> {
+        let device = V4lDevice::with_path(&id.0).map_err(map_io_error)?;
+        let descriptions = device.query_controls().map_err(map_io_error)?;
+        let mut result = Controls::default();
+        for description in descriptions.iter() {
+            if description_is_unavailable(description) {
+                continue;
+            }
+            let Ok(control) = device.control(description) else {
+                continue;
+            };
+            populate_control_value(&mut result, description.id, &control.value);
+        }
+        Ok(result)
     }
 
-    fn apply_controls(_id: &DeviceId, _controls: &Controls) -> Result<(), Error> {
-        Err(Error::Unsupported {
-            platform: "linux",
-            reason: "controls not yet implemented",
-        })
+    fn apply_controls(id: &DeviceId, controls: &Controls) -> Result<(), Error> {
+        let device = V4lDevice::with_path(&id.0).map_err(map_io_error)?;
+        let descriptions = device.query_controls().map_err(map_io_error)?;
+
+        let auto_batch = collect_auto_mode_writes(controls, &descriptions)?;
+        if !auto_batch.is_empty() {
+            device.set_controls(auto_batch).map_err(map_io_error)?;
+        }
+
+        let value_batch = collect_value_writes(controls, &descriptions)?;
+        if !value_batch.is_empty() {
+            device.set_controls(value_batch).map_err(map_io_error)?;
+        }
+
+        Ok(())
     }
+}
+
+#[cfg(feature = "controls")]
+use v4l::control::{Control as V4lControl, Description, Flags as V4lFlags, Value as V4lValue};
+#[cfg(feature = "controls")]
+use v4l::v4l_sys::{
+    V4L2_CID_AUTO_WHITE_BALANCE, V4L2_CID_BACKLIGHT_COMPENSATION, V4L2_CID_BRIGHTNESS,
+    V4L2_CID_CONTRAST, V4L2_CID_EXPOSURE_ABSOLUTE, V4L2_CID_EXPOSURE_AUTO, V4L2_CID_FOCUS_ABSOLUTE,
+    V4L2_CID_FOCUS_AUTO, V4L2_CID_GAIN, V4L2_CID_PAN_ABSOLUTE, V4L2_CID_POWER_LINE_FREQUENCY,
+    V4L2_CID_SATURATION, V4L2_CID_SHARPNESS, V4L2_CID_TILT_ABSOLUTE,
+    V4L2_CID_WHITE_BALANCE_TEMPERATURE, V4L2_CID_ZOOM_ABSOLUTE,
+};
+
+#[cfg(feature = "controls")]
+const V4L2_EXPOSURE_AUTO_FULL: i64 = 0;
+#[cfg(feature = "controls")]
+const V4L2_EXPOSURE_AUTO_MANUAL: i64 = 1;
+#[cfg(feature = "controls")]
+const V4L2_POWER_LINE_FREQUENCY_DISABLED: i64 = 0;
+#[cfg(feature = "controls")]
+const V4L2_POWER_LINE_FREQUENCY_HZ50: i64 = 1;
+#[cfg(feature = "controls")]
+const V4L2_POWER_LINE_FREQUENCY_HZ60: i64 = 2;
+#[cfg(feature = "controls")]
+const V4L2_POWER_LINE_FREQUENCY_AUTO: i64 = 3;
+
+#[cfg(feature = "controls")]
+fn description_is_unavailable(description: &Description) -> bool {
+    description.flags.contains(V4lFlags::DISABLED) || description.flags.contains(V4lFlags::INACTIVE)
+}
+
+#[cfg(feature = "controls")]
+fn description_range(description: &Description) -> ControlRange {
+    ControlRange {
+        min: description.minimum as f32,
+        max: description.maximum as f32,
+        step: description.step as f32,
+        default: description.default as f32,
+    }
+}
+
+#[cfg(feature = "controls")]
+fn populate_capability(caps: &mut ControlCapabilities, description: &Description) {
+    let range = description_range(description);
+    match description.id {
+        id if id == V4L2_CID_FOCUS_ABSOLUTE => caps.focus = Some(range),
+        id if id == V4L2_CID_FOCUS_AUTO => {
+            caps.auto_focus = Some(true);
+        }
+        id if id == V4L2_CID_EXPOSURE_ABSOLUTE => caps.exposure = Some(range),
+        id if id == V4L2_CID_EXPOSURE_AUTO => {
+            caps.auto_exposure = Some(true);
+        }
+        id if id == V4L2_CID_WHITE_BALANCE_TEMPERATURE => {
+            caps.white_balance_temperature = Some(range);
+        }
+        id if id == V4L2_CID_AUTO_WHITE_BALANCE => {
+            caps.auto_white_balance = Some(true);
+        }
+        id if id == V4L2_CID_BRIGHTNESS => caps.brightness = Some(range),
+        id if id == V4L2_CID_CONTRAST => caps.contrast = Some(range),
+        id if id == V4L2_CID_SATURATION => caps.saturation = Some(range),
+        id if id == V4L2_CID_SHARPNESS => caps.sharpness = Some(range),
+        id if id == V4L2_CID_GAIN => caps.gain = Some(range),
+        id if id == V4L2_CID_BACKLIGHT_COMPENSATION => caps.backlight_compensation = Some(range),
+        id if id == V4L2_CID_POWER_LINE_FREQUENCY => {
+            caps.power_line_frequency = Some(power_line_capability(description));
+        }
+        id if id == V4L2_CID_PAN_ABSOLUTE => caps.pan = Some(range),
+        id if id == V4L2_CID_TILT_ABSOLUTE => caps.tilt = Some(range),
+        id if id == V4L2_CID_ZOOM_ABSOLUTE => caps.zoom = Some(range),
+        _ => {}
+    }
+}
+
+#[cfg(feature = "controls")]
+fn power_line_capability(description: &Description) -> PowerLineFrequencyCapability {
+    let items = description.items.as_ref();
+    let has_value = |target: i64| -> bool {
+        items
+            .map(|entries| entries.iter().any(|(value, _)| *value as i64 == target))
+            .unwrap_or(false)
+    };
+    PowerLineFrequencyCapability {
+        disabled: has_value(V4L2_POWER_LINE_FREQUENCY_DISABLED),
+        hz50: has_value(V4L2_POWER_LINE_FREQUENCY_HZ50),
+        hz60: has_value(V4L2_POWER_LINE_FREQUENCY_HZ60),
+        auto: has_value(V4L2_POWER_LINE_FREQUENCY_AUTO),
+        default: power_line_from_value(description.default).unwrap_or(PowerLineFrequency::Disabled),
+    }
+}
+
+#[cfg(feature = "controls")]
+fn power_line_from_value(value: i64) -> Option<PowerLineFrequency> {
+    match value {
+        V4L2_POWER_LINE_FREQUENCY_DISABLED => Some(PowerLineFrequency::Disabled),
+        V4L2_POWER_LINE_FREQUENCY_HZ50 => Some(PowerLineFrequency::Hz50),
+        V4L2_POWER_LINE_FREQUENCY_HZ60 => Some(PowerLineFrequency::Hz60),
+        V4L2_POWER_LINE_FREQUENCY_AUTO => Some(PowerLineFrequency::Auto),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "controls")]
+fn power_line_to_value(frequency: PowerLineFrequency) -> i64 {
+    match frequency {
+        PowerLineFrequency::Disabled => V4L2_POWER_LINE_FREQUENCY_DISABLED,
+        PowerLineFrequency::Hz50 => V4L2_POWER_LINE_FREQUENCY_HZ50,
+        PowerLineFrequency::Hz60 => V4L2_POWER_LINE_FREQUENCY_HZ60,
+        PowerLineFrequency::Auto => V4L2_POWER_LINE_FREQUENCY_AUTO,
+    }
+}
+
+#[cfg(feature = "controls")]
+fn populate_control_value(target: &mut Controls, id: u32, value: &V4lValue) {
+    let as_integer = match value {
+        V4lValue::Integer(number) => Some(*number),
+        V4lValue::Boolean(flag) => Some(*flag as i64),
+        _ => None,
+    };
+    let Some(number) = as_integer else { return };
+    match id {
+        V4L2_CID_FOCUS_ABSOLUTE => target.focus = Some(number as f32),
+        V4L2_CID_FOCUS_AUTO => target.auto_focus = Some(number != 0),
+        V4L2_CID_EXPOSURE_ABSOLUTE => target.exposure = Some(number as f32),
+        V4L2_CID_EXPOSURE_AUTO => {
+            target.auto_exposure = Some(number != V4L2_EXPOSURE_AUTO_MANUAL);
+        }
+        V4L2_CID_WHITE_BALANCE_TEMPERATURE => {
+            target.white_balance_temperature = Some(number as f32);
+        }
+        V4L2_CID_AUTO_WHITE_BALANCE => target.auto_white_balance = Some(number != 0),
+        V4L2_CID_BRIGHTNESS => target.brightness = Some(number as f32),
+        V4L2_CID_CONTRAST => target.contrast = Some(number as f32),
+        V4L2_CID_SATURATION => target.saturation = Some(number as f32),
+        V4L2_CID_SHARPNESS => target.sharpness = Some(number as f32),
+        V4L2_CID_GAIN => target.gain = Some(number as f32),
+        V4L2_CID_BACKLIGHT_COMPENSATION => target.backlight_compensation = Some(number as f32),
+        V4L2_CID_POWER_LINE_FREQUENCY => {
+            target.power_line_frequency = power_line_from_value(number)
+        }
+        V4L2_CID_PAN_ABSOLUTE => target.pan = Some(number as f32),
+        V4L2_CID_TILT_ABSOLUTE => target.tilt = Some(number as f32),
+        V4L2_CID_ZOOM_ABSOLUTE => target.zoom = Some(number as f32),
+        _ => {}
+    }
+}
+
+#[cfg(feature = "controls")]
+fn find_description<'a>(
+    descriptions: &'a [Description],
+    id: u32,
+    reason: &'static str,
+) -> Result<&'a Description, Error> {
+    descriptions
+        .iter()
+        .find(|description| description.id == id)
+        .filter(|description| !description_is_unavailable(description))
+        .ok_or(Error::Unsupported {
+            platform: "linux",
+            reason,
+        })
+}
+
+#[cfg(feature = "controls")]
+fn clamp_and_snap_to_description(value: f32, description: &Description) -> i64 {
+    let clamped = (value as f64)
+        .clamp(description.minimum as f64, description.maximum as f64)
+        .round() as i64;
+    if description.step <= 1 {
+        return clamped;
+    }
+    let offset = clamped - description.minimum;
+    let step = description.step as i64;
+    let snapped = (offset / step) * step;
+    description.minimum + snapped
+}
+
+#[cfg(feature = "controls")]
+fn ensure_writable(description: &Description, reason: &'static str) -> Result<(), Error> {
+    if description.flags.contains(V4lFlags::READ_ONLY) {
+        return Err(Error::Unsupported {
+            platform: "linux",
+            reason,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(feature = "controls")]
+fn collect_auto_mode_writes(
+    controls: &Controls,
+    descriptions: &[Description],
+) -> Result<Vec<V4lControl>, Error> {
+    let mut batch = Vec::new();
+    if let Some(enabled) = controls.auto_focus {
+        let description = find_description(descriptions, V4L2_CID_FOCUS_AUTO, "auto_focus")?;
+        ensure_writable(description, "auto_focus")?;
+        batch.push(V4lControl {
+            id: V4L2_CID_FOCUS_AUTO,
+            value: V4lValue::Integer(if enabled { 1 } else { 0 }),
+        });
+    }
+    if let Some(enabled) = controls.auto_exposure {
+        let description = find_description(descriptions, V4L2_CID_EXPOSURE_AUTO, "auto_exposure")?;
+        ensure_writable(description, "auto_exposure")?;
+        let value = if enabled {
+            V4L2_EXPOSURE_AUTO_FULL
+        } else {
+            V4L2_EXPOSURE_AUTO_MANUAL
+        };
+        batch.push(V4lControl {
+            id: V4L2_CID_EXPOSURE_AUTO,
+            value: V4lValue::Integer(value),
+        });
+    }
+    if let Some(enabled) = controls.auto_white_balance {
+        let description = find_description(
+            descriptions,
+            V4L2_CID_AUTO_WHITE_BALANCE,
+            "auto_white_balance",
+        )?;
+        ensure_writable(description, "auto_white_balance")?;
+        batch.push(V4lControl {
+            id: V4L2_CID_AUTO_WHITE_BALANCE,
+            value: V4lValue::Integer(if enabled { 1 } else { 0 }),
+        });
+    }
+    Ok(batch)
+}
+
+#[cfg(feature = "controls")]
+fn collect_value_writes(
+    controls: &Controls,
+    descriptions: &[Description],
+) -> Result<Vec<V4lControl>, Error> {
+    let mut batch = Vec::new();
+    let numeric_fields: [(Option<f32>, u32, &'static str); 12] = [
+        (controls.focus, V4L2_CID_FOCUS_ABSOLUTE, "focus"),
+        (controls.exposure, V4L2_CID_EXPOSURE_ABSOLUTE, "exposure"),
+        (
+            controls.white_balance_temperature,
+            V4L2_CID_WHITE_BALANCE_TEMPERATURE,
+            "white_balance_temperature",
+        ),
+        (controls.brightness, V4L2_CID_BRIGHTNESS, "brightness"),
+        (controls.contrast, V4L2_CID_CONTRAST, "contrast"),
+        (controls.saturation, V4L2_CID_SATURATION, "saturation"),
+        (controls.sharpness, V4L2_CID_SHARPNESS, "sharpness"),
+        (controls.gain, V4L2_CID_GAIN, "gain"),
+        (
+            controls.backlight_compensation,
+            V4L2_CID_BACKLIGHT_COMPENSATION,
+            "backlight_compensation",
+        ),
+        (controls.pan, V4L2_CID_PAN_ABSOLUTE, "pan"),
+        (controls.tilt, V4L2_CID_TILT_ABSOLUTE, "tilt"),
+        (controls.zoom, V4L2_CID_ZOOM_ABSOLUTE, "zoom"),
+    ];
+    for (maybe_value, cid, reason) in numeric_fields {
+        if let Some(value) = maybe_value {
+            let description = find_description(descriptions, cid, reason)?;
+            ensure_writable(description, reason)?;
+            batch.push(V4lControl {
+                id: cid,
+                value: V4lValue::Integer(clamp_and_snap_to_description(value, description)),
+            });
+        }
+    }
+    if let Some(frequency) = controls.power_line_frequency {
+        let description = find_description(
+            descriptions,
+            V4L2_CID_POWER_LINE_FREQUENCY,
+            "power_line_frequency",
+        )?;
+        ensure_writable(description, "power_line_frequency")?;
+        batch.push(V4lControl {
+            id: V4L2_CID_POWER_LINE_FREQUENCY,
+            value: V4lValue::Integer(power_line_to_value(frequency)),
+        });
+    }
+    Ok(batch)
 }

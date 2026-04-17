@@ -10,6 +10,19 @@ use crate::types::{
 };
 #[cfg(feature = "controls")]
 use crate::types::{ControlCapabilities, Controls};
+#[cfg(feature = "controls")]
+use crate::types::{ControlRange, PowerLineFrequency, PowerLineFrequencyCapability};
+
+#[cfg(feature = "controls")]
+const VIDEO_PROC_AMP_POWER_LINE_FREQUENCY: i32 = 10;
+#[cfg(feature = "controls")]
+const VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_DISABLED: i32 = 0;
+#[cfg(feature = "controls")]
+const VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_HZ50: i32 = 1;
+#[cfg(feature = "controls")]
+const VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_HZ60: i32 = 2;
+#[cfg(feature = "controls")]
+const VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_AUTO: i32 = 3;
 use bytes::Bytes;
 use crossbeam_channel::Sender;
 use std::collections::HashMap;
@@ -17,11 +30,21 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use windows::Win32::Foundation::{S_FALSE, S_OK};
+#[cfg(feature = "controls")]
+use windows::Win32::Media::DirectShow::{
+    CameraControl_Exposure, CameraControl_Flags_Auto, CameraControl_Flags_Manual,
+    CameraControl_Focus, CameraControl_Pan, CameraControl_Tilt, CameraControl_Zoom,
+    IAMCameraControl, IAMVideoProcAmp, VideoProcAmp_BacklightCompensation, VideoProcAmp_Brightness,
+    VideoProcAmp_Contrast, VideoProcAmp_Flags_Auto, VideoProcAmp_Flags_Manual, VideoProcAmp_Gain,
+    VideoProcAmp_Saturation, VideoProcAmp_Sharpness, VideoProcAmp_WhiteBalance,
+};
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{
     COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
 };
 use windows::core::GUID;
+#[cfg(feature = "controls")]
+use windows::core::Interface;
 
 pub struct SessionHandle {
     shutdown: Arc<AtomicBool>,
@@ -760,24 +783,525 @@ impl Drop for MfGuard {
 
 #[cfg(feature = "controls")]
 impl BackendControls for Driver {
-    fn control_capabilities(_id: &DeviceId) -> Result<ControlCapabilities, Error> {
-        Err(Error::Unsupported {
-            platform: "windows",
-            reason: "controls not yet implemented",
+    fn control_capabilities(id: &DeviceId) -> Result<ControlCapabilities, Error> {
+        let _com = ComGuard::init()?;
+        let _mf = MfGuard::init()?;
+        let source = activate_source(id)?;
+        let camera_control = try_open_camera_control(&source);
+        let video_proc_amp = try_open_video_proc_amp(&source);
+
+        let cc_focus = camera_control_describe(camera_control.as_ref(), CameraControl_Focus.0);
+        let cc_exposure =
+            camera_control_describe(camera_control.as_ref(), CameraControl_Exposure.0);
+        let cc_pan = camera_control_describe(camera_control.as_ref(), CameraControl_Pan.0);
+        let cc_tilt = camera_control_describe(camera_control.as_ref(), CameraControl_Tilt.0);
+        let cc_zoom = camera_control_describe(camera_control.as_ref(), CameraControl_Zoom.0);
+
+        let vpa_wb = video_proc_amp_describe(video_proc_amp.as_ref(), VideoProcAmp_WhiteBalance.0);
+        let vpa_brightness =
+            video_proc_amp_describe(video_proc_amp.as_ref(), VideoProcAmp_Brightness.0);
+        let vpa_contrast =
+            video_proc_amp_describe(video_proc_amp.as_ref(), VideoProcAmp_Contrast.0);
+        let vpa_saturation =
+            video_proc_amp_describe(video_proc_amp.as_ref(), VideoProcAmp_Saturation.0);
+        let vpa_sharpness =
+            video_proc_amp_describe(video_proc_amp.as_ref(), VideoProcAmp_Sharpness.0);
+        let vpa_gain = video_proc_amp_describe(video_proc_amp.as_ref(), VideoProcAmp_Gain.0);
+        let vpa_backlight = video_proc_amp_describe(
+            video_proc_amp.as_ref(),
+            VideoProcAmp_BacklightCompensation.0,
+        );
+        let vpa_power_line = video_proc_amp
+            .as_ref()
+            .and_then(power_line_frequency_capability);
+
+        Ok(ControlCapabilities {
+            focus: cc_focus.as_ref().map(|entry| entry.range),
+            auto_focus: cc_focus.as_ref().map(|entry| entry.supports_auto),
+            exposure: cc_exposure.as_ref().map(|entry| entry.range),
+            auto_exposure: cc_exposure.as_ref().map(|entry| entry.supports_auto),
+            white_balance_temperature: vpa_wb.as_ref().map(|entry| entry.range),
+            auto_white_balance: vpa_wb.as_ref().map(|entry| entry.supports_auto),
+            brightness: vpa_brightness.as_ref().map(|entry| entry.range),
+            contrast: vpa_contrast.as_ref().map(|entry| entry.range),
+            saturation: vpa_saturation.as_ref().map(|entry| entry.range),
+            sharpness: vpa_sharpness.as_ref().map(|entry| entry.range),
+            gain: vpa_gain.as_ref().map(|entry| entry.range),
+            backlight_compensation: vpa_backlight.as_ref().map(|entry| entry.range),
+            power_line_frequency: vpa_power_line,
+            pan: cc_pan.as_ref().map(|entry| entry.range),
+            tilt: cc_tilt.as_ref().map(|entry| entry.range),
+            zoom: cc_zoom.as_ref().map(|entry| entry.range),
         })
     }
 
-    fn read_controls(_id: &DeviceId) -> Result<Controls, Error> {
-        Err(Error::Unsupported {
-            platform: "windows",
-            reason: "controls not yet implemented",
+    fn read_controls(id: &DeviceId) -> Result<Controls, Error> {
+        let _com = ComGuard::init()?;
+        let _mf = MfGuard::init()?;
+        let source = activate_source(id)?;
+        let camera_control = try_open_camera_control(&source);
+        let video_proc_amp = try_open_video_proc_amp(&source);
+
+        let cc_focus = camera_control_snapshot(camera_control.as_ref(), CameraControl_Focus.0);
+        let cc_exposure =
+            camera_control_snapshot(camera_control.as_ref(), CameraControl_Exposure.0);
+        let cc_pan = camera_control_snapshot(camera_control.as_ref(), CameraControl_Pan.0);
+        let cc_tilt = camera_control_snapshot(camera_control.as_ref(), CameraControl_Tilt.0);
+        let cc_zoom = camera_control_snapshot(camera_control.as_ref(), CameraControl_Zoom.0);
+
+        let vpa_wb = video_proc_amp_snapshot(video_proc_amp.as_ref(), VideoProcAmp_WhiteBalance.0);
+        let vpa_brightness =
+            video_proc_amp_snapshot(video_proc_amp.as_ref(), VideoProcAmp_Brightness.0);
+        let vpa_contrast =
+            video_proc_amp_snapshot(video_proc_amp.as_ref(), VideoProcAmp_Contrast.0);
+        let vpa_saturation =
+            video_proc_amp_snapshot(video_proc_amp.as_ref(), VideoProcAmp_Saturation.0);
+        let vpa_sharpness =
+            video_proc_amp_snapshot(video_proc_amp.as_ref(), VideoProcAmp_Sharpness.0);
+        let vpa_gain = video_proc_amp_snapshot(video_proc_amp.as_ref(), VideoProcAmp_Gain.0);
+        let vpa_backlight = video_proc_amp_snapshot(
+            video_proc_amp.as_ref(),
+            VideoProcAmp_BacklightCompensation.0,
+        );
+        let vpa_power_line = video_proc_amp.as_ref().and_then(read_power_line_frequency);
+
+        Ok(Controls {
+            focus: cc_focus.as_ref().map(|entry| entry.value),
+            auto_focus: cc_focus.as_ref().map(|entry| entry.is_auto),
+            exposure: cc_exposure.as_ref().map(|entry| entry.value),
+            auto_exposure: cc_exposure.as_ref().map(|entry| entry.is_auto),
+            white_balance_temperature: vpa_wb.as_ref().map(|entry| entry.value),
+            auto_white_balance: vpa_wb.as_ref().map(|entry| entry.is_auto),
+            brightness: vpa_brightness.as_ref().map(|entry| entry.value),
+            contrast: vpa_contrast.as_ref().map(|entry| entry.value),
+            saturation: vpa_saturation.as_ref().map(|entry| entry.value),
+            sharpness: vpa_sharpness.as_ref().map(|entry| entry.value),
+            gain: vpa_gain.as_ref().map(|entry| entry.value),
+            backlight_compensation: vpa_backlight.as_ref().map(|entry| entry.value),
+            power_line_frequency: vpa_power_line,
+            pan: cc_pan.as_ref().map(|entry| entry.value),
+            tilt: cc_tilt.as_ref().map(|entry| entry.value),
+            zoom: cc_zoom.as_ref().map(|entry| entry.value),
         })
     }
 
-    fn apply_controls(_id: &DeviceId, _controls: &Controls) -> Result<(), Error> {
-        Err(Error::Unsupported {
-            platform: "windows",
-            reason: "controls not yet implemented",
-        })
+    fn apply_controls(id: &DeviceId, controls: &Controls) -> Result<(), Error> {
+        let _com = ComGuard::init()?;
+        let _mf = MfGuard::init()?;
+        let source = activate_source(id)?;
+        let camera_control = try_open_camera_control(&source);
+        let video_proc_amp = try_open_video_proc_amp(&source);
+
+        apply_camera_control_auto_modes(camera_control.as_ref(), controls)?;
+        apply_video_proc_amp_auto_modes(video_proc_amp.as_ref(), controls)?;
+        apply_camera_control_values(camera_control.as_ref(), controls)?;
+        apply_video_proc_amp_values(video_proc_amp.as_ref(), controls)?;
+        apply_video_proc_amp_power_line_frequency(video_proc_amp.as_ref(), controls)?;
+
+        Ok(())
     }
+}
+
+#[cfg(feature = "controls")]
+fn try_open_camera_control(source: &IMFMediaSource) -> Option<IAMCameraControl> {
+    source.cast::<IAMCameraControl>().ok()
+}
+
+#[cfg(feature = "controls")]
+fn try_open_video_proc_amp(source: &IMFMediaSource) -> Option<IAMVideoProcAmp> {
+    source.cast::<IAMVideoProcAmp>().ok()
+}
+
+#[cfg(feature = "controls")]
+struct CameraControlDescription {
+    range: ControlRange,
+    supports_auto: bool,
+}
+
+#[cfg(feature = "controls")]
+struct CameraControlSnapshot {
+    value: f32,
+    is_auto: bool,
+}
+
+#[cfg(feature = "controls")]
+fn camera_control_describe(
+    interface: Option<&IAMCameraControl>,
+    property: i32,
+) -> Option<CameraControlDescription> {
+    let interface = interface?;
+    let mut min = 0i32;
+    let mut max = 0i32;
+    let mut step = 0i32;
+    let mut default = 0i32;
+    let mut capability_flags = 0i32;
+    let hresult = unsafe {
+        interface.GetRange(
+            property,
+            &mut min,
+            &mut max,
+            &mut step,
+            &mut default,
+            &mut capability_flags,
+        )
+    };
+    hresult.ok()?;
+    Some(CameraControlDescription {
+        range: ControlRange {
+            min: min as f32,
+            max: max as f32,
+            step: step as f32,
+            default: default as f32,
+        },
+        supports_auto: capability_flags & CameraControl_Flags_Auto.0 != 0,
+    })
+}
+
+#[cfg(feature = "controls")]
+fn camera_control_snapshot(
+    interface: Option<&IAMCameraControl>,
+    property: i32,
+) -> Option<CameraControlSnapshot> {
+    let interface = interface?;
+    let mut value = 0i32;
+    let mut current_mode_flags = 0i32;
+    let hresult = unsafe { interface.Get(property, &mut value, &mut current_mode_flags) };
+    hresult.ok()?;
+    Some(CameraControlSnapshot {
+        value: value as f32,
+        is_auto: current_mode_flags & CameraControl_Flags_Auto.0 != 0,
+    })
+}
+
+#[cfg(feature = "controls")]
+fn video_proc_amp_describe(
+    interface: Option<&IAMVideoProcAmp>,
+    property: i32,
+) -> Option<CameraControlDescription> {
+    let interface = interface?;
+    let mut min = 0i32;
+    let mut max = 0i32;
+    let mut step = 0i32;
+    let mut default = 0i32;
+    let mut capability_flags = 0i32;
+    let hresult = unsafe {
+        interface.GetRange(
+            property,
+            &mut min,
+            &mut max,
+            &mut step,
+            &mut default,
+            &mut capability_flags,
+        )
+    };
+    hresult.ok()?;
+    Some(CameraControlDescription {
+        range: ControlRange {
+            min: min as f32,
+            max: max as f32,
+            step: step as f32,
+            default: default as f32,
+        },
+        supports_auto: capability_flags & VideoProcAmp_Flags_Auto.0 != 0,
+    })
+}
+
+#[cfg(feature = "controls")]
+fn video_proc_amp_snapshot(
+    interface: Option<&IAMVideoProcAmp>,
+    property: i32,
+) -> Option<CameraControlSnapshot> {
+    let interface = interface?;
+    let mut value = 0i32;
+    let mut current_mode_flags = 0i32;
+    let hresult = unsafe { interface.Get(property, &mut value, &mut current_mode_flags) };
+    hresult.ok()?;
+    Some(CameraControlSnapshot {
+        value: value as f32,
+        is_auto: current_mode_flags & VideoProcAmp_Flags_Auto.0 != 0,
+    })
+}
+
+#[cfg(feature = "controls")]
+fn power_line_frequency_from_value(value: i32) -> Option<PowerLineFrequency> {
+    match value {
+        VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_DISABLED => Some(PowerLineFrequency::Disabled),
+        VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_HZ50 => Some(PowerLineFrequency::Hz50),
+        VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_HZ60 => Some(PowerLineFrequency::Hz60),
+        VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_AUTO => Some(PowerLineFrequency::Auto),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "controls")]
+fn power_line_frequency_to_value(frequency: PowerLineFrequency) -> i32 {
+    match frequency {
+        PowerLineFrequency::Disabled => VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_DISABLED,
+        PowerLineFrequency::Hz50 => VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_HZ50,
+        PowerLineFrequency::Hz60 => VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_HZ60,
+        PowerLineFrequency::Auto => VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_AUTO,
+    }
+}
+
+#[cfg(feature = "controls")]
+fn power_line_frequency_capability(
+    interface: &IAMVideoProcAmp,
+) -> Option<PowerLineFrequencyCapability> {
+    let mut min = 0i32;
+    let mut max = 0i32;
+    let mut step = 0i32;
+    let mut default = 0i32;
+    let mut capability_flags = 0i32;
+    let hresult = unsafe {
+        interface.GetRange(
+            VIDEO_PROC_AMP_POWER_LINE_FREQUENCY,
+            &mut min,
+            &mut max,
+            &mut step,
+            &mut default,
+            &mut capability_flags,
+        )
+    };
+    hresult.ok()?;
+    let default_freq =
+        power_line_frequency_from_value(default).unwrap_or(PowerLineFrequency::Disabled);
+    let in_range = |target: i32| target >= min && target <= max;
+    Some(PowerLineFrequencyCapability {
+        hz50: in_range(VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_HZ50),
+        hz60: in_range(VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_HZ60),
+        disabled: in_range(VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_DISABLED),
+        auto: in_range(VIDEO_PROC_AMP_POWER_LINE_FREQUENCY_AUTO),
+        default: default_freq,
+    })
+}
+
+#[cfg(feature = "controls")]
+fn read_power_line_frequency(interface: &IAMVideoProcAmp) -> Option<PowerLineFrequency> {
+    let mut value = 0i32;
+    let mut current_mode_flags = 0i32;
+    let hresult = unsafe {
+        interface.Get(
+            VIDEO_PROC_AMP_POWER_LINE_FREQUENCY,
+            &mut value,
+            &mut current_mode_flags,
+        )
+    };
+    hresult.ok()?;
+    power_line_frequency_from_value(value)
+}
+
+#[cfg(feature = "controls")]
+fn apply_video_proc_amp_power_line_frequency(
+    interface: Option<&IAMVideoProcAmp>,
+    controls: &Controls,
+) -> Result<(), Error> {
+    let Some(frequency) = controls.power_line_frequency else {
+        return Ok(());
+    };
+    let Some(interface) = interface else {
+        return Err(Error::Unsupported {
+            platform: "windows",
+            reason: "IAMVideoProcAmp not exposed",
+        });
+    };
+    let value = power_line_frequency_to_value(frequency);
+    unsafe {
+        interface.Set(
+            VIDEO_PROC_AMP_POWER_LINE_FREQUENCY,
+            value,
+            VideoProcAmp_Flags_Manual.0,
+        )
+    }
+    .map_err(map_com_error)?;
+    Ok(())
+}
+
+#[cfg(feature = "controls")]
+fn clamp_snap_i32(value: f32, range: &ControlRange) -> i32 {
+    let clamped = (value as f64).clamp(range.min as f64, range.max as f64);
+    let stepped = if range.step > 0.0 {
+        let offset = clamped - range.min as f64;
+        let step = range.step as f64;
+        let snapped = (offset / step).round() * step;
+        range.min as f64 + snapped
+    } else {
+        clamped
+    };
+    stepped.round() as i32
+}
+
+#[cfg(feature = "controls")]
+fn apply_camera_control_auto_modes(
+    interface: Option<&IAMCameraControl>,
+    controls: &Controls,
+) -> Result<(), Error> {
+    let Some(interface) = interface else {
+        if controls.auto_focus.is_some() || controls.auto_exposure.is_some() {
+            return Err(Error::Unsupported {
+                platform: "windows",
+                reason: "IAMCameraControl not exposed",
+            });
+        }
+        return Ok(());
+    };
+    if let Some(enabled) = controls.auto_focus {
+        let flags = if enabled {
+            CameraControl_Flags_Auto.0
+        } else {
+            CameraControl_Flags_Manual.0
+        };
+        let value = resolve_camera_control_value(interface, CameraControl_Focus.0)?;
+        unsafe { interface.Set(CameraControl_Focus.0, value, flags) }.map_err(map_com_error)?;
+    }
+    if let Some(enabled) = controls.auto_exposure {
+        let flags = if enabled {
+            CameraControl_Flags_Auto.0
+        } else {
+            CameraControl_Flags_Manual.0
+        };
+        let value = resolve_camera_control_value(interface, CameraControl_Exposure.0)?;
+        unsafe { interface.Set(CameraControl_Exposure.0, value, flags) }.map_err(map_com_error)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "controls")]
+fn resolve_camera_control_value(interface: &IAMCameraControl, property: i32) -> Result<i32, Error> {
+    if let Some(snapshot) = camera_control_snapshot(Some(interface), property) {
+        return Ok(snapshot.value as i32);
+    }
+    if let Some(description) = camera_control_describe(Some(interface), property) {
+        return Ok(description.range.default as i32);
+    }
+    Err(Error::Unsupported {
+        platform: "windows",
+        reason: "camera_control_property_unavailable",
+    })
+}
+
+#[cfg(feature = "controls")]
+fn apply_video_proc_amp_auto_modes(
+    interface: Option<&IAMVideoProcAmp>,
+    controls: &Controls,
+) -> Result<(), Error> {
+    let Some(interface) = interface else {
+        if controls.auto_white_balance.is_some() {
+            return Err(Error::Unsupported {
+                platform: "windows",
+                reason: "IAMVideoProcAmp not exposed",
+            });
+        }
+        return Ok(());
+    };
+    if let Some(enabled) = controls.auto_white_balance {
+        let flags = if enabled {
+            VideoProcAmp_Flags_Auto.0
+        } else {
+            VideoProcAmp_Flags_Manual.0
+        };
+        let value = resolve_video_proc_amp_value(interface, VideoProcAmp_WhiteBalance.0)?;
+        unsafe { interface.Set(VideoProcAmp_WhiteBalance.0, value, flags) }
+            .map_err(map_com_error)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "controls")]
+fn resolve_video_proc_amp_value(interface: &IAMVideoProcAmp, property: i32) -> Result<i32, Error> {
+    if let Some(snapshot) = video_proc_amp_snapshot(Some(interface), property) {
+        return Ok(snapshot.value as i32);
+    }
+    if let Some(description) = video_proc_amp_describe(Some(interface), property) {
+        return Ok(description.range.default as i32);
+    }
+    Err(Error::Unsupported {
+        platform: "windows",
+        reason: "video_proc_amp_property_unavailable",
+    })
+}
+
+#[cfg(feature = "controls")]
+fn apply_camera_control_values(
+    interface: Option<&IAMCameraControl>,
+    controls: &Controls,
+) -> Result<(), Error> {
+    let Some(interface) = interface else {
+        let any_value = controls.focus.is_some()
+            || controls.exposure.is_some()
+            || controls.pan.is_some()
+            || controls.tilt.is_some()
+            || controls.zoom.is_some();
+        if any_value {
+            return Err(Error::Unsupported {
+                platform: "windows",
+                reason: "IAMCameraControl not exposed",
+            });
+        }
+        return Ok(());
+    };
+    let manual = CameraControl_Flags_Manual.0;
+    let assignments: [(Option<f32>, i32); 5] = [
+        (controls.focus, CameraControl_Focus.0),
+        (controls.exposure, CameraControl_Exposure.0),
+        (controls.pan, CameraControl_Pan.0),
+        (controls.tilt, CameraControl_Tilt.0),
+        (controls.zoom, CameraControl_Zoom.0),
+    ];
+    for (maybe_value, property) in assignments {
+        let Some(value) = maybe_value else { continue };
+        let snapped = match camera_control_describe(Some(interface), property) {
+            Some(description) => clamp_snap_i32(value, &description.range),
+            None => value as i32,
+        };
+        unsafe { interface.Set(property, snapped, manual) }.map_err(map_com_error)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "controls")]
+fn apply_video_proc_amp_values(
+    interface: Option<&IAMVideoProcAmp>,
+    controls: &Controls,
+) -> Result<(), Error> {
+    let Some(interface) = interface else {
+        let any_value = controls.brightness.is_some()
+            || controls.contrast.is_some()
+            || controls.saturation.is_some()
+            || controls.sharpness.is_some()
+            || controls.gain.is_some()
+            || controls.backlight_compensation.is_some()
+            || controls.white_balance_temperature.is_some();
+        if any_value {
+            return Err(Error::Unsupported {
+                platform: "windows",
+                reason: "IAMVideoProcAmp not exposed",
+            });
+        }
+        return Ok(());
+    };
+    let manual = VideoProcAmp_Flags_Manual.0;
+    let assignments: [(Option<f32>, i32); 7] = [
+        (controls.brightness, VideoProcAmp_Brightness.0),
+        (controls.contrast, VideoProcAmp_Contrast.0),
+        (controls.saturation, VideoProcAmp_Saturation.0),
+        (controls.sharpness, VideoProcAmp_Sharpness.0),
+        (controls.gain, VideoProcAmp_Gain.0),
+        (
+            controls.backlight_compensation,
+            VideoProcAmp_BacklightCompensation.0,
+        ),
+        (
+            controls.white_balance_temperature,
+            VideoProcAmp_WhiteBalance.0,
+        ),
+    ];
+    for (maybe_value, property) in assignments {
+        let Some(value) = maybe_value else { continue };
+        let snapped = match video_proc_amp_describe(Some(interface), property) {
+            Some(description) => clamp_snap_i32(value, &description.range),
+            None => value as i32,
+        };
+        unsafe { interface.Set(property, snapped, manual) }.map_err(map_com_error)?;
+    }
+    Ok(())
 }

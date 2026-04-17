@@ -1,14 +1,46 @@
+use std::sync::mpsc;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cameras::analysis;
-use cameras::{CameraSource, Credentials, Device, PixelFormat, Resolution, StreamConfig};
+use cameras::{
+    CameraSource, ControlCapabilities, ControlRange, Controls, Credentials, Device, PixelFormat,
+    Rect, Resolution, StreamConfig,
+};
 use eframe::egui;
 use egui_cameras::{capture_frame, set_active};
 use image::{ExtendedColorType, ImageEncoder, codecs::png::PngEncoder};
 
+type ApplyRequest = (Device, Controls);
+
+struct AutofocusState {
+    focus_min: f32,
+    focus_max: f32,
+    step: f32,
+    total_samples: u32,
+    sample_index: u32,
+    best: Option<(f32, f32)>,
+    phase: AutofocusPhase,
+}
+
+enum AutofocusPhase {
+    Apply,
+    Settle(Instant),
+    Sample,
+    Finalize,
+}
+
+impl AutofocusState {
+    fn focus_at(&self, index: u32) -> f32 {
+        (self.focus_min + index as f32 * self.step).min(self.focus_max)
+    }
+}
+
 const SHARPEST_BURST_SIZE: usize = 16;
 const SHARPEST_BURST_INTERVAL: Duration = Duration::from_millis(30);
+const AUTOFOCUS_SETTLE: Duration = Duration::from_millis(150);
+const AUTOFOCUS_SWEEP_STRIDE_MULTIPLIER: f32 = 4.0;
+const AUTOFOCUS_CONTINUOUS_SAMPLES: f32 = 20.0;
 
 const STREAM_CONFIG: StreamConfig = StreamConfig {
     resolution: Resolution {
@@ -49,11 +81,19 @@ struct App {
     active: bool,
     status: String,
     last_capture: Option<String>,
+    capabilities: Option<ControlCapabilities>,
+    capabilities_error: Option<String>,
+    pending_controls: Controls,
+    current_controls: Controls,
+    apply_tx: mpsc::Sender<ApplyRequest>,
+    live_apply: bool,
+    autofocus: Option<AutofocusState>,
 }
 
 impl App {
     fn new() -> Self {
         let devices = cameras::devices().unwrap_or_default();
+        let apply_tx = spawn_apply_worker();
         Self {
             devices,
             selected_device: 0,
@@ -65,6 +105,181 @@ impl App {
             active: true,
             status: "Idle".into(),
             last_capture: None,
+            capabilities: None,
+            capabilities_error: None,
+            pending_controls: Controls::default(),
+            current_controls: Controls::default(),
+            apply_tx,
+            live_apply: false,
+            autofocus: None,
+        }
+    }
+
+    fn queue_apply(&self) {
+        let Some(device) = self.devices.get(self.selected_device) else {
+            return;
+        };
+        let _ = self
+            .apply_tx
+            .send((device.clone(), self.pending_controls.clone()));
+    }
+
+    fn refresh_capabilities(&mut self) {
+        self.capabilities = None;
+        self.capabilities_error = None;
+        self.pending_controls = Controls::default();
+        self.current_controls = Controls::default();
+        if self.source_mode != SourceMode::Usb {
+            return;
+        }
+        let Some(device) = self.devices.get(self.selected_device) else {
+            return;
+        };
+        match cameras::control_capabilities(device) {
+            Ok(caps) => {
+                self.current_controls = cameras::read_controls(device).unwrap_or_default();
+                self.capabilities = Some(caps);
+            }
+            Err(error) => self.capabilities_error = Some(error.to_string()),
+        }
+    }
+
+    fn start_autofocus(&mut self) {
+        if self.autofocus.is_some() {
+            return;
+        }
+        if self.stream.is_none() {
+            return;
+        }
+        let Some(device) = self.devices.get(self.selected_device).cloned() else {
+            return;
+        };
+        let Some(caps) = self.capabilities.clone() else {
+            self.last_capture = Some("No capabilities".into());
+            return;
+        };
+        let Some(focus_range) = caps.focus else {
+            self.last_capture = Some("Camera has no controllable focus".into());
+            return;
+        };
+        if let Err(error) = cameras::apply_controls(
+            &device,
+            &Controls {
+                auto_focus: Some(false),
+                auto_exposure: Some(false),
+                auto_white_balance: Some(false),
+                ..Default::default()
+            },
+        ) {
+            self.last_capture = Some(format!("Autofocus setup failed: {error}"));
+            return;
+        }
+
+        let step = if focus_range.step > 0.0 {
+            focus_range.step * AUTOFOCUS_SWEEP_STRIDE_MULTIPLIER
+        } else {
+            ((focus_range.max - focus_range.min) / AUTOFOCUS_CONTINUOUS_SAMPLES).max(f32::EPSILON)
+        };
+        let span = (focus_range.max - focus_range.min).max(0.0);
+        let total_samples = (span / step).floor() as u32 + 1;
+
+        self.autofocus = Some(AutofocusState {
+            focus_min: focus_range.min,
+            focus_max: focus_range.max,
+            step,
+            total_samples,
+            sample_index: 0,
+            best: None,
+            phase: AutofocusPhase::Apply,
+        });
+        self.last_capture = Some(format!("Autofocus: sweeping {total_samples} samples"));
+    }
+
+    fn tick_autofocus(&mut self, ctx: &egui::Context) {
+        let Some(mut state) = self.autofocus.take() else {
+            return;
+        };
+        let Some(stream) = self.stream.as_ref() else {
+            self.autofocus = None;
+            self.last_capture = Some("Autofocus cancelled (stream closed)".into());
+            return;
+        };
+        let Some(device) = self.devices.get(self.selected_device).cloned() else {
+            self.autofocus = None;
+            return;
+        };
+
+        match state.phase {
+            AutofocusPhase::Apply => {
+                let focus_value = state.focus_at(state.sample_index);
+                if cameras::apply_controls(
+                    &device,
+                    &Controls {
+                        focus: Some(focus_value),
+                        ..Default::default()
+                    },
+                )
+                .is_err()
+                {
+                    self.last_capture = Some("Autofocus: apply failed".into());
+                    self.autofocus = None;
+                    return;
+                }
+                state.phase = AutofocusPhase::Settle(Instant::now());
+                self.autofocus = Some(state);
+                ctx.request_repaint_after(AUTOFOCUS_SETTLE);
+            }
+            AutofocusPhase::Settle(start) => {
+                if start.elapsed() >= AUTOFOCUS_SETTLE {
+                    state.phase = AutofocusPhase::Sample;
+                }
+                self.autofocus = Some(state);
+                ctx.request_repaint_after(Duration::from_millis(16));
+            }
+            AutofocusPhase::Sample => {
+                let focus_value = state.focus_at(state.sample_index);
+                if let Some(frame) = capture_frame(&stream.pump) {
+                    let roi = Rect {
+                        x: frame.width / 4,
+                        y: frame.height / 4,
+                        width: frame.width / 2,
+                        height: frame.height / 2,
+                    };
+                    let variance = analysis::blur_variance_in(&frame, roi);
+                    if state.best.is_none_or(|(_, score)| variance > score) {
+                        state.best = Some((focus_value, variance));
+                    }
+                }
+                state.sample_index += 1;
+                if state.sample_index >= state.total_samples {
+                    state.phase = AutofocusPhase::Finalize;
+                } else {
+                    state.phase = AutofocusPhase::Apply;
+                }
+                self.autofocus = Some(state);
+                ctx.request_repaint();
+            }
+            AutofocusPhase::Finalize => match state.best {
+                Some((winner, score)) => {
+                    let _ = cameras::apply_controls(
+                        &device,
+                        &Controls {
+                            focus: Some(winner),
+                            ..Default::default()
+                        },
+                    );
+                    self.pending_controls.focus = Some(winner);
+                    self.pending_controls.auto_focus = Some(false);
+                    self.last_capture = Some(format!(
+                        "Autofocus locked at {winner:.2} (variance {score:.1})"
+                    ));
+                    self.autofocus = None;
+                }
+                None => {
+                    self.last_capture = Some("Autofocus: no samples captured".into());
+                    self.autofocus = None;
+                }
+            },
         }
     }
 
@@ -95,6 +310,7 @@ impl App {
                 self.stream = Some(egui_cameras::spawn(camera));
                 self.active = true;
                 self.status = format!("Streaming: {}", source_label(&source));
+                self.refresh_capabilities();
             }
             Err(error) => {
                 self.stream = None;
@@ -176,6 +392,9 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.autofocus.is_some() {
+            self.tick_autofocus(ctx);
+        }
         if let Some(stream) = &mut self.stream
             && let Err(error) = egui_cameras::update_texture(stream, ctx)
         {
@@ -190,6 +409,7 @@ impl eframe::App for App {
                 ui.selectable_value(&mut self.source_mode, SourceMode::Rtsp, "RTSP");
             });
 
+            let mut selection_changed = false;
             ui.horizontal(|ui| match self.source_mode {
                 SourceMode::Usb => {
                     let labels: Vec<String> = if self.devices.is_empty() {
@@ -206,14 +426,21 @@ impl eframe::App for App {
                         )
                         .show_ui(ui, |ui| {
                             for (index, label) in labels.iter().enumerate() {
-                                ui.selectable_value(&mut self.selected_device, index, label);
+                                let previous = self.selected_device;
+                                let response =
+                                    ui.selectable_value(&mut self.selected_device, index, label);
+                                if response.clicked() && self.selected_device != previous {
+                                    selection_changed = true;
+                                }
                             }
                         });
                     if ui.button("Refresh").clicked() {
                         self.refresh_devices();
+                        selection_changed = true;
                     }
                 }
                 SourceMode::Rtsp => {
+                    let _ = &mut selection_changed;
                     ui.label("URL");
                     ui.text_edit_singleline(&mut self.rtsp_url);
                     ui.label("User");
@@ -228,6 +455,10 @@ impl eframe::App for App {
                     );
                 }
             });
+
+            if selection_changed {
+                self.refresh_capabilities();
+            }
 
             ui.horizontal(|ui| {
                 if ui.button("Connect").clicked() {
@@ -272,6 +503,55 @@ impl eframe::App for App {
                         self.pick_sharpest();
                     }
                 });
+                ui.collapsing("Capabilities", |ui| {
+                    render_capabilities_panel(
+                        ui,
+                        self.capabilities.as_ref(),
+                        self.capabilities_error.as_deref(),
+                    );
+                });
+                let has_controls_ui = self.capabilities.is_some();
+                if has_controls_ui {
+                    ui.collapsing("Controls", |ui| {
+                        let changed = render_controls_editor(
+                            ui,
+                            self.capabilities.as_ref().unwrap(),
+                            &self.current_controls,
+                            &mut self.pending_controls,
+                        );
+                        if changed && self.live_apply {
+                            self.queue_apply();
+                        }
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.live_apply, "Apply live");
+                            if !self.live_apply && ui.button("Apply").clicked() {
+                                self.queue_apply();
+                            }
+                            let has_focus = self
+                                .capabilities
+                                .as_ref()
+                                .and_then(|caps| caps.focus.as_ref())
+                                .is_some();
+                            if has_focus {
+                                let autofocus_label = match self.autofocus.as_ref() {
+                                    Some(state) => format!(
+                                        "Autofocusing {}/{}",
+                                        state.sample_index.min(state.total_samples),
+                                        state.total_samples
+                                    ),
+                                    None => "Autofocus (sweep)".to_string(),
+                                };
+                                let autofocus_button = egui::Button::new(autofocus_label);
+                                if ui
+                                    .add_enabled(self.autofocus.is_none(), autofocus_button)
+                                    .clicked()
+                                {
+                                    self.start_autofocus();
+                                }
+                            }
+                        });
+                    });
+                }
             });
         }
 
@@ -322,6 +602,333 @@ fn save_png(frame: &cameras::Frame, path: &str) -> Result<(), Box<dyn std::error
     let encoder = PngEncoder::new(std::io::BufWriter::new(file));
     encoder.write_image(&rgba, frame.width, frame.height, ExtendedColorType::Rgba8)?;
     Ok(())
+}
+
+const SUPPORTED_MARK: &str = "✓";
+const UNSUPPORTED_MARK: &str = "✗";
+
+fn render_capabilities_panel(
+    ui: &mut egui::Ui,
+    capabilities: Option<&ControlCapabilities>,
+    error: Option<&str>,
+) {
+    if let Some(message) = error {
+        ui.colored_label(egui::Color32::from_rgb(200, 80, 80), message);
+        return;
+    }
+    let Some(caps) = capabilities else {
+        ui.label("Connect to a USB camera to view its control capabilities.");
+        return;
+    };
+    let rows: [(&str, CapabilityDisplay); 16] = [
+        ("focus", CapabilityDisplay::Range(caps.focus.as_ref())),
+        ("auto_focus", CapabilityDisplay::Bool(caps.auto_focus)),
+        ("exposure", CapabilityDisplay::Range(caps.exposure.as_ref())),
+        ("auto_exposure", CapabilityDisplay::Bool(caps.auto_exposure)),
+        (
+            "white_balance_temperature",
+            CapabilityDisplay::Range(caps.white_balance_temperature.as_ref()),
+        ),
+        (
+            "auto_white_balance",
+            CapabilityDisplay::Bool(caps.auto_white_balance),
+        ),
+        (
+            "brightness",
+            CapabilityDisplay::Range(caps.brightness.as_ref()),
+        ),
+        ("contrast", CapabilityDisplay::Range(caps.contrast.as_ref())),
+        (
+            "saturation",
+            CapabilityDisplay::Range(caps.saturation.as_ref()),
+        ),
+        (
+            "sharpness",
+            CapabilityDisplay::Range(caps.sharpness.as_ref()),
+        ),
+        ("gain", CapabilityDisplay::Range(caps.gain.as_ref())),
+        (
+            "backlight_compensation",
+            CapabilityDisplay::Range(caps.backlight_compensation.as_ref()),
+        ),
+        (
+            "power_line_frequency",
+            CapabilityDisplay::PowerLine(caps.power_line_frequency.is_some()),
+        ),
+        ("pan", CapabilityDisplay::Range(caps.pan.as_ref())),
+        ("tilt", CapabilityDisplay::Range(caps.tilt.as_ref())),
+        ("zoom", CapabilityDisplay::Range(caps.zoom.as_ref())),
+    ];
+    egui::Grid::new("capabilities_grid")
+        .num_columns(3)
+        .spacing([10.0, 4.0])
+        .show(ui, |ui| {
+            for (label, display) in rows {
+                render_capability_row(ui, label, display);
+                ui.end_row();
+            }
+        });
+}
+
+enum CapabilityDisplay<'a> {
+    Range(Option<&'a ControlRange>),
+    Bool(Option<bool>),
+    PowerLine(bool),
+}
+
+fn render_capability_row(ui: &mut egui::Ui, label: &str, display: CapabilityDisplay) {
+    let green = egui::Color32::from_rgb(80, 200, 120);
+    let red = egui::Color32::from_rgb(200, 80, 80);
+    let (supported, detail) = match display {
+        CapabilityDisplay::Range(Some(range)) => (true, format_range(range)),
+        CapabilityDisplay::Range(None) => (false, "not supported".to_string()),
+        CapabilityDisplay::Bool(Some(true)) => (true, "auto toggle supported".to_string()),
+        CapabilityDisplay::Bool(Some(false)) => (true, "manual only".to_string()),
+        CapabilityDisplay::Bool(None) => (false, "not supported".to_string()),
+        CapabilityDisplay::PowerLine(true) => (true, "menu supported".to_string()),
+        CapabilityDisplay::PowerLine(false) => (false, "not supported".to_string()),
+    };
+    let mark = if supported {
+        SUPPORTED_MARK
+    } else {
+        UNSUPPORTED_MARK
+    };
+    let mark_color = if supported { green } else { red };
+    ui.colored_label(mark_color, mark);
+    ui.label(label);
+    ui.label(detail);
+}
+
+fn render_controls_editor(
+    ui: &mut egui::Ui,
+    capabilities: &ControlCapabilities,
+    current: &Controls,
+    pending: &mut Controls,
+) -> bool {
+    let mut changed = false;
+    egui::Grid::new("controls_editor_grid")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            changed |= numeric_slider_row(
+                ui,
+                "focus",
+                capabilities.focus.as_ref(),
+                current.focus,
+                pending.auto_focus == Some(true),
+                &mut pending.focus,
+            );
+            changed |= auto_tri_state_row(
+                ui,
+                "auto_focus",
+                capabilities.auto_focus,
+                &mut pending.auto_focus,
+            );
+            changed |= numeric_slider_row(
+                ui,
+                "exposure",
+                capabilities.exposure.as_ref(),
+                current.exposure,
+                pending.auto_exposure == Some(true),
+                &mut pending.exposure,
+            );
+            changed |= auto_tri_state_row(
+                ui,
+                "auto_exposure",
+                capabilities.auto_exposure,
+                &mut pending.auto_exposure,
+            );
+            changed |= numeric_slider_row(
+                ui,
+                "white_balance_temperature",
+                capabilities.white_balance_temperature.as_ref(),
+                current.white_balance_temperature,
+                pending.auto_white_balance == Some(true),
+                &mut pending.white_balance_temperature,
+            );
+            changed |= auto_tri_state_row(
+                ui,
+                "auto_white_balance",
+                capabilities.auto_white_balance,
+                &mut pending.auto_white_balance,
+            );
+            changed |= numeric_slider_row(
+                ui,
+                "brightness",
+                capabilities.brightness.as_ref(),
+                current.brightness,
+                false,
+                &mut pending.brightness,
+            );
+            changed |= numeric_slider_row(
+                ui,
+                "contrast",
+                capabilities.contrast.as_ref(),
+                current.contrast,
+                false,
+                &mut pending.contrast,
+            );
+            changed |= numeric_slider_row(
+                ui,
+                "saturation",
+                capabilities.saturation.as_ref(),
+                current.saturation,
+                false,
+                &mut pending.saturation,
+            );
+            changed |= numeric_slider_row(
+                ui,
+                "sharpness",
+                capabilities.sharpness.as_ref(),
+                current.sharpness,
+                false,
+                &mut pending.sharpness,
+            );
+            changed |= numeric_slider_row(
+                ui,
+                "gain",
+                capabilities.gain.as_ref(),
+                current.gain,
+                false,
+                &mut pending.gain,
+            );
+            changed |= numeric_slider_row(
+                ui,
+                "backlight_compensation",
+                capabilities.backlight_compensation.as_ref(),
+                current.backlight_compensation,
+                false,
+                &mut pending.backlight_compensation,
+            );
+            changed |= numeric_slider_row(
+                ui,
+                "pan",
+                capabilities.pan.as_ref(),
+                current.pan,
+                false,
+                &mut pending.pan,
+            );
+            changed |= numeric_slider_row(
+                ui,
+                "tilt",
+                capabilities.tilt.as_ref(),
+                current.tilt,
+                false,
+                &mut pending.tilt,
+            );
+            changed |= numeric_slider_row(
+                ui,
+                "zoom",
+                capabilities.zoom.as_ref(),
+                current.zoom,
+                false,
+                &mut pending.zoom,
+            );
+        });
+    changed
+}
+
+fn numeric_slider_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    range: Option<&ControlRange>,
+    current: Option<f32>,
+    locked_by_auto: bool,
+    pending: &mut Option<f32>,
+) -> bool {
+    let mut changed = false;
+    ui.label(label);
+    match range {
+        Some(range) => {
+            let fallback_value = current.unwrap_or(range.default);
+            ui.horizontal(|ui| {
+                let mut enabled = pending.is_some();
+                let checkbox_enabled = !locked_by_auto;
+                if ui
+                    .add_enabled(checkbox_enabled, egui::Checkbox::new(&mut enabled, ""))
+                    .changed()
+                {
+                    *pending = if enabled { Some(fallback_value) } else { None };
+                    changed = true;
+                }
+                let slider_enabled = enabled && !locked_by_auto;
+                let mut value = pending.unwrap_or(fallback_value);
+                let response = ui.add_enabled(
+                    slider_enabled,
+                    egui::Slider::new(&mut value, range.min..=range.max),
+                );
+                if response.changed() {
+                    *pending = Some(value);
+                    changed = true;
+                }
+                if locked_by_auto {
+                    ui.weak("auto on");
+                } else if let Some(current_value) = current {
+                    ui.weak(format!("now {current_value:.2}"));
+                }
+            });
+        }
+        None => {
+            ui.weak("not supported");
+        }
+    }
+    ui.end_row();
+    changed
+}
+
+fn auto_tri_state_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    capability: Option<bool>,
+    pending: &mut Option<bool>,
+) -> bool {
+    ui.label(label);
+    if capability != Some(true) {
+        ui.weak("not supported");
+        ui.end_row();
+        return false;
+    }
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        changed |= ui.radio_value(pending, None, "leave").changed();
+        changed |= ui.radio_value(pending, Some(false), "manual").changed();
+        changed |= ui.radio_value(pending, Some(true), "auto").changed();
+    });
+    ui.end_row();
+    changed
+}
+
+fn spawn_apply_worker() -> mpsc::Sender<ApplyRequest> {
+    let (tx, rx) = mpsc::channel::<ApplyRequest>();
+    std::thread::Builder::new()
+        .name("egui-demo-controls".into())
+        .spawn(move || worker_loop(rx))
+        .expect("spawn controls worker");
+    tx
+}
+
+fn worker_loop(rx: mpsc::Receiver<ApplyRequest>) {
+    while let Ok(mut latest) = rx.recv() {
+        while let Ok(newer) = rx.try_recv() {
+            latest = newer;
+        }
+        let (device, controls) = latest;
+        let _ = cameras::apply_controls(&device, &controls);
+    }
+}
+
+fn format_range(range: &ControlRange) -> String {
+    if range.step > 0.0 {
+        format!(
+            "{:.0}..{:.0} (step {:.0}, default {:.0})",
+            range.min, range.max, range.step, range.default
+        )
+    } else {
+        format!(
+            "{:.2}..{:.2} (default {:.2})",
+            range.min, range.max, range.default
+        )
+    }
 }
 
 fn unix_timestamp() -> u64 {
