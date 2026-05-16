@@ -571,6 +571,25 @@ fn pack_u32_pair(high: u32, low: u32) -> u64 {
     (high as u64) << 32 | low as u64
 }
 
+fn split_planes(
+    buffer: &[u8],
+    pixel_format: PixelFormat,
+    width: u32,
+    height: u32,
+    stride: u32,
+) -> (Bytes, Bytes) {
+    if pixel_format == PixelFormat::Nv12 {
+        let y_stride = if stride == 0 { width } else { stride } as usize;
+        let y_size = y_stride * height as usize;
+        if buffer.len() >= y_size {
+            let primary = Bytes::copy_from_slice(&buffer[..y_size]);
+            let secondary = Bytes::copy_from_slice(&buffer[y_size..]);
+            return (primary, secondary);
+        }
+    }
+    (Bytes::copy_from_slice(buffer), Bytes::new())
+}
+
 fn stride_from_current_type(reader: &IMFSourceReader, stream: u32) -> Option<u32> {
     let current = unsafe { reader.GetCurrentMediaType(stream) }.ok()?;
     let stride = unsafe { current.GetUINT32(&MF_MT_DEFAULT_STRIDE) }.ok()?;
@@ -657,6 +676,14 @@ fn read_next_sample(
 
     let stride = declared_stride;
 
+    let (plane_primary, plane_secondary) = split_planes(
+        &data,
+        applied.pixel_format,
+        applied.resolution.width,
+        applied.resolution.height,
+        stride,
+    );
+
     Ok(Some(Frame {
         width: applied.resolution.width,
         height: applied.resolution.height,
@@ -664,8 +691,8 @@ fn read_next_sample(
         timestamp: frame_timestamp,
         pixel_format: applied.pixel_format,
         quality: crate::types::FrameQuality::Intact,
-        plane_primary: Bytes::from(data),
-        plane_secondary: Bytes::new(),
+        plane_primary,
+        plane_secondary,
     }))
 }
 
